@@ -25,14 +25,17 @@ _Abstrack_: Projects tabular data to images creating 2-dimentional embenddings. 
 
 ## Required Python packages
 Install all the dependencies:
-```bash
-pip3 install -r requirements.txt
+```
+pip install -r requirements.txt
+conda install --file requirements.txt
 ```
 
 ## Run
 ```
 cd super_tml
 python main.py --dataset iris --model densenet121
+python main.py --dataset wine --model densenet121
+python main.py --dataset mltoy --model densenet121_n
 ```
 
 ## References
