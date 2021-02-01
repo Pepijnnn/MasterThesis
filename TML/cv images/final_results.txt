@@ -1,0 +1,9 @@
+Wine:
+font = 0.2, i = 15 Bests Model Accuracies: Train: 1.00 | Val: 0.93 | Test: 0.86
+font = 0.2, i = 30 Bests Model Accuracies: Train: 1.00 | Val: 0.86 | Test: 0.81
+font = 0.4, i = 30 Bests Model Accuracies: Train: 0.99 | Val: 0.86 | Test: 0.89
+font = 0.6, i = 30 Bests Model Accuracies: Train: 1.00 | Val: 0.83 | Test: 0.94
+
+
+Iris:
+Bests Model Accuracies: Train: 0.96 | Val: 1.00 | Test: 0.97
