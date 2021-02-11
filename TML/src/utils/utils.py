@@ -51,9 +51,10 @@ def logging(epoch, train_stats, val_stats, writer):
         for stat in val_stats:
             writer.add_scalar('Val/' + stat, val_stats[stat], epoch)
 
-    print('Epoch [{:4d}/{:4d}] | Train Accuracy: {:4.2f} | Val Accuracy: {:4.2f}'.format(
-        epoch, args.epochs, train_stats['accuracy'], val_stats['accuracy']))
-    print(f"Loss {train_stats['loss']} | F1 {train_stats['f1']}")
+    # print('Epoch [{:4d}/{:4d}] | Train Accuracy: {:4.2f} | Val Accuracy: {:4.2f}'.format(
+        # epoch, args.epochs, train_stats['accuracy'], val_stats['accuracy']))
+    print(f"Epoch [{epoch}/{args.epochs}] Train Accuracy: {round(train_stats['accuracy'], 4)} | Val Accuracy: {round(val_stats['accuracy'], 4)}. Train Avg Prec: {round(train_stats['avg_prec'], 4)} | Val Avg Prec: {round(val_stats['avg_prec'], 4)}")
+    print(f"Train Loss {round(train_stats['loss'], 4)} | Val Loss {round(val_stats['loss'], 4)}. Train F1 {round(train_stats['f1'], 4)} | Val F1 {round(val_stats['f1'], 4)}")
 
 # ----- Tensorboard Utils -----
 

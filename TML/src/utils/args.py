@@ -17,20 +17,20 @@ def parser():
     PARSER = argparse.ArgumentParser(description='Training parameters.')
 
     PARSER.add_argument('--dataset', default='iris', type=str,
-                        choices=['iris', 'wine', 'mltoy'], help='Dataset.')
+                        choices=['iris', 'wine', 'mltoy', 'yeast14c', 'yeast14c_m'], help='Dataset.')
     PARSER.add_argument('--model', default='densenet121', type=str,
-                        choices=['resnet18', 'densenet121', 'densenet121_n', 'ownnet'], help='Model.')
+                        choices=['resnet18', 'densenet121', 'densenet121_n', 'ownnet', 'no_img'], help='Model.')
     PARSER.add_argument('--opt', default='Adam', type=str,
                         choices=['Adam', 'Adamax', 'Adagrad'], help='Optimizer.')
 
-    PARSER.add_argument('--epochs', default=13, type=int,
-                        help='Number of training epochs.')
-    PARSER.add_argument('--batch_size', default=8, type=int,
+    PARSER.add_argument('--epochs', default=2, type=int, 
+                        help='Number of training epochs.')#10->2
+    PARSER.add_argument('--batch_size', default=16, type=int,
                         help='Batch size.') # 4->16
     PARSER.add_argument('--val_size', default=0.2, type=int,
                         help='Validation size. Proportion of the train dataset.')
     PARSER.add_argument('--test_size', default=0.2, type=int,
-                        help='Test size proportion of the hole dataset.')
+                        help='Test size proportion of the Whole dataset.')
 
     PARSER.add_argument('--seed', default=0, type=int,
                         help='Fix random seed.')

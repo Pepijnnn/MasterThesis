@@ -10,14 +10,33 @@ from src.utils import args
 def load_model(model_name=args.model, n_classes=11):
     # Model selection
     if model_name == 'resnet18':
-        model = models.resnet18(pretrained=True)
+        model = models.resnext50_32x4d(pretrained=True)
         num_features = model.fc.in_features
-        model.fc = nn.Linear(num_features, 3)
+        model.fc = nn.Linear(num_features, 11)
     elif model_name == 'densenet121':
-        model = models.densenet121(pretrained=False)
-        model.classifier = nn.Linear(1024, 14) #3
-        # nn.Sigmoid
+        model = models.densenet121(pretrained=True)
+        model.classifier = nn.Linear(1024, 14) #3, 14
+        # model = nn.Sequential(  dmodel,
+        #                         nn.Sigmoid())
         # print(model)
+        # exit()
+    elif model_name == 'no_img':
+        model = nn.Sequential(
+          nn.Linear(103,150),
+          nn.ReLU(),
+          nn.Linear(150,300),
+          nn.ReLU(),
+          nn.Linear(300,600),
+          nn.ReLU(),
+          nn.Linear(600,300),
+          nn.ReLU(),
+          nn.Linear(300,150),
+          nn.ReLU(),
+          nn.Linear(150,75),
+          nn.ReLU(),
+          nn.Linear(75,14),
+        #   nn.Sigmoid()
+        )
         
     elif model_name == 'densenet121_n':
         model = models.densenet121(pretrained=True)

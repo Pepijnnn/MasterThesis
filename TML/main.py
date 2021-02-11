@@ -20,7 +20,7 @@ from src.opt.training_pipeline import train_model
 def main():
     fix_random_seed(seed=args.seed)
 
-    # Eneble TensorBoard logs
+    # Enable TensorBoard logs
     writer = SummaryWriter(log_dir='./logs/' +
                            args.dataset + '_' + args.tags +
                            datetime.now().strftime("/%d-%m-%Y/%H-%M-%S"))
