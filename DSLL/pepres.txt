@@ -1,0 +1,148 @@
+Recall_score_macro:    0.3989
+Recall_score_micro:    0.4182
+Precision_score_macro:    0.5223
+Precision_score_micro:    0.5528
+Jaccard_score_macro:    0.2745
+Jaccard_score_micro:    0.3125
+Accuracy =  0.0938
+precision_at_ks:  {1: 0.5518, 3: 0.4653, 5: 0.369}
+Hamming_loss:  0.3075
+Log_loss:   14.0832
+Average_precision_score:  0.5347
+F1_Micro  0.4762
+One_error:  0.4482
+Ranking loss:  0.2906
+coverage:  0.5881
+AUC-micro:    0.708
+AUC-macro:    0.69
+
+Recall_score_macro:    0.4192
+Recall_score_micro:    0.4084
+Precision_score_macro:    0.5401
+Precision_score_micro:    0.4666
+Jaccard_score_macro:    0.2793
+Jaccard_score_micro:    0.2784
+Accuracy =  0.4111
+precision_at_ks:  {1: 0.3708, 3: 0.2857, 5: 0.1714}
+Hamming_loss:  0.3024
+Log_loss:   2.7603
+Average_precision_score:  0.4893
+F1_Micro  0.4355
+One_error:  0.6292
+Ranking loss:  0.2007
+coverage:  0.4104
+AUC-micro:    0.6651
+AUC-macro:    0.6902
+
+Recall_score_macro:    0.5357
+Recall_score_micro:    0.528
+Precision_score_macro:    0.4467
+Precision_score_micro:    0.4157
+Jaccard_score_macro:    0.3079
+Jaccard_score_micro:    0.3031
+Accuracy =  0.5234
+precision_at_ks:  {1: 0.2912, 3: 0.1818, 5: 0.1091}
+Hamming_loss:  0.331
+Log_loss:   0.9582
+Average_precision_score:  0.4898
+F1_Micro  0.4652
+One_error:  0.7088
+Ranking loss:  0.0632
+coverage:  0.3043
+AUC-micro:    0.6684
+AUC-macro:    0.6802
+
+3 epochs:
+Recall_score_macro:    0.2903
+Recall_score_micro:    0.4479
+Precision_score_macro:    0.5787
+Precision_score_micro:    0.6562
+Jaccard_score_macro:    0.225
+Jaccard_score_micro:    0.3628
+Accuracy =  0.6663
+precision_at_ks:  {1: 0.3555, 3: 0.1534, 5: 0.092}
+Hamming_loss:  0.181
+Log_loss:   1.1376
+Average_precision_score:  0.4331
+F1_Micro  0.5324
+One_error:  0.6445
+Ranking loss:  0.0872
+coverage:  0.2737
+AUC-micro:    0.7835
+AUC-macro:    0.6907
+
+3pochs with extra layer
+Recall_score_macro:    0.313
+Recall_score_micro:    0.4834
+Precision_score_macro:    0.8152
+Precision_score_micro:    0.6316
+Jaccard_score_macro:    0.2315
+Jaccard_score_micro:    0.3771
+Accuracy =  0.6609
+precision_at_ks:  {1: 0.3599, 3: 0.1534, 5: 0.092}
+Hamming_loss:  0.1838
+Log_loss:   1.0793
+Average_precision_score:  0.435
+F1_Micro  0.5477
+One_error:  0.6401
+Ranking loss:  0.0829
+coverage:  0.2715
+AUC-micro:    0.7914
+AUC-macro:    0.7002
+
+epochs 5 with extra layer
+Recall_score_macro:    0.2788
+Recall_score_micro:    0.436
+Precision_score_macro:    0.3251
+Precision_score_micro:    0.6434
+Jaccard_score_macro:    0.2145
+Jaccard_score_micro:    0.3511
+Accuracy =  0.6554
+precision_at_ks:  {1: 0.3577, 3: 0.1534, 5: 0.092}
+Hamming_loss:  0.1854
+Log_loss:   1.0103
+Average_precision_score:  0.4354
+F1_Micro  0.5198
+One_error:  0.6423
+Ranking loss:  0.0851
+coverage:  0.2726
+AUC-micro:    0.7857
+AUC-macro:    0.7059
+
+epochs 3 with 10 label epochs
+Recall_score_macro:    0.2712
+Recall_score_micro:    0.4242
+Precision_score_macro:    0.3403
+Precision_score_micro:    0.6806
+Jaccard_score_macro:    0.2162
+Jaccard_score_micro:    0.3538
+Accuracy =  0.6696
+precision_at_ks:  {1: 0.3588, 3: 0.1534, 5: 0.092}
+Hamming_loss:  0.1783
+Log_loss:   1.1179
+Average_precision_score:  0.4293
+F1_Micro  0.5226
+One_error:  0.6412
+Ranking loss:  0.084
+coverage:  0.2721
+AUC-micro:    0.7866
+AUC-macro:    0.6975
+
+epochs 3 with 10 label epochs with 30 class epochs
+Recall_score_macro:    0.3152
+Recall_score_micro:    0.4929
+Precision_score_macro:    0.3281
+Precision_score_micro:    0.6562
+Jaccard_score_macro:    0.2369
+Jaccard_score_micro:    0.3917
+Accuracy =  0.6685
+precision_at_ks:  {1: 0.3697, 3: 0.1534, 5: 0.092}
+Hamming_loss:  0.1761
+Log_loss:   1.2093
+Average_precision_score:  0.4223
+F1_Micro  0.5629
+One_error:  0.6303
+Ranking loss:  0.0731
+coverage:  0.2666
+AUC-micro:    0.7877
+AUC-macro:    0.6658
