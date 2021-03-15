@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*- 
 
 # Deep Streaming Label Learning
+# Pepijn Sibbes adapted
 
 import torch.nn as nn
 import torch
@@ -169,7 +170,7 @@ class LossPredictionMod(nn.Module):
         W_m_output = self.Fc1(wm_input)
         tf_output = self.Fc2(tf_input)
         ss_output = self.Fc3(ss_input)
-        predicted_loss = self.fc_concat(torch.cat((W_m_output,tf_output,ss_output),1))
+        predicted_loss = self.fc_concat(torch.cat((tf_output,W_m_output,ss_output,1)) #,
         # predicted_loss = self.fc_concat(torch.cat((W_m_output,ss_output),1))
         # predicted_loss = self.fc_concat(ss_output)
         return predicted_loss

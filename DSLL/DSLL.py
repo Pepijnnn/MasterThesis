@@ -1,13 +1,6 @@
 # -*- coding:utf-8 -*-
 
 # Deep Streaming Label Learning
-
-'''
-Deep Streaming Label Learning
-
-This code is temporarily confidential
-'''
-#print(__doc__)
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 import torch
@@ -35,7 +28,7 @@ class CustomDataset(Dataset):
         return len(self.x)
 
 if __name__ == '__main__':
-    seednr = 123
+    seednr = 121 #123
     random.seed(seednr)
     torch.manual_seed(seednr)
     torch.cuda.manual_seed(seednr)

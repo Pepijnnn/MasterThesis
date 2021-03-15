@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 
 # Deep Streaming Label Learning
+# Pepijn Sibbes adapted
 
 from collections import namedtuple
 import time

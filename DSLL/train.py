@@ -1,6 +1,8 @@
 # -*- coding:utf-8 -*-
 
 # Deep Streaming Label Learning
+# Pepijn Sibbes adapted
+
 import sklearn.metrics as metrics
 from model import _label_representation, _S_label_mapping, _classifier, _classifier2, IntegratedModel,\
     KnowledgeDistillation,  _classifierBatchNorm, _S_label_mapping2, _DNN, _BP_ML, IntegratedDSLL, LossPredictionMod
@@ -65,6 +67,16 @@ def make_train_step(model, loss_fn, optimizer):
         loss = loss_fn(yhat, y)
         loss.backward()
         optimizer.step()
+        return loss.item()
+    # Returns the function that will be called inside the train loop
+    return train_step
+
+def make_eval_step(model, loss_fn, optimizer):
+    def train_step(x, y):
+        model.eval()
+        optimizer.zero_grad()
+        yhat = model(x)
+        loss = loss_fn(yhat, y)
         return loss.item()
     # Returns the function that will be called inside the train loop
     return train_step
@@ -286,6 +298,7 @@ def train_classifier_batch(hyper_params, train_X, train_Y, test_X, test_Y, train
         criterion = nn.MultiLabelSoftMarginLoss()
 
     train_step = make_train_step(classifier, criterion, optimizer)
+    eval_step = make_eval_step(classifier, criterion, optimizer)
 
     training_losses = []
     # for each epoch
@@ -356,6 +369,20 @@ def make_train_DSLL(model, loss_fn, optimizer):
     # Returns the function that will be called inside the train loop
     return train_step_DSLL
 
+def make_eval_DSLL(model, loss_fn, optimizer):
+    def eval_step_DSLL(x, y_mapping, y):
+        # Sets model to EVAL mode
+        model.eval()
+        optimizer.zero_grad()
+        # Makes predictions
+        yhat, kd_mid, trans_mid, ss_mid = model(x,y_mapping)
+        loss = loss_fn(yhat, y)        
+
+        return loss, kd_mid, trans_mid, ss_mid
+
+    # Returns the function that will be called inside the train loop
+    return eval_step_DSLL
+
 ################################################################## DSLL ###################################################################
 def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader):
     hyper_params.classifier_input_dim = train_X.shape[1]
@@ -393,25 +420,31 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     elif hyper_params.loss == 'DIY_entropy':
         criterion = lossAdd
     else:
-        print('please choose loss function (CrossEntropy is default)')
+        print('please choose loss function (MultiLabelSoftMarginLoss is default)')
         criterion = nn.MultiLabelSoftMarginLoss(reduction ='none') 
     train_step = make_train_DSLL(classifier, criterion, optimizer)
+    eval_step = make_eval_DSLL(classifier, criterion, optimizer)
 
     # lp_criterion = approxNDCGLoss()
     # lp_criterion = LambdaLoss()
     # lp_criterion = ListNetLoss()
-    lp_criterion = RMSELoss()
     # lp_criterion = ListMLELoss()
 
+    lp_criterion = RMSELoss()
+
+    # lp_criterion = RankLoss()
+    # lp_criterion = MapRankingLoss()
+    # lp_criterion = SpearmanLoss()
+    
     
     classifier_lpm = LossPredictionMod(hyper_params)
     # optimizer2 = optim.Adam(classifier_lpm.parameters(), weight_decay=hyper_params.classifier_L2)
     optimizer2 = torch.optim.Adam([
-            {'params':classifier_lpm.Fc1.parameters()},   # , 'lr': 0.0001},
-            {'params':classifier_lpm.Fc2.parameters()},
+            #{'params':classifier_lpm.Fc1.parameters()},   # , 'lr': 0.0001},
+            #{'params':classifier_lpm.Fc2.parameters()},
             {'params':classifier_lpm.Fc3.parameters()},
             {'params':classifier_lpm.fc_concat.parameters()},
-        ], weight_decay=hyper_params.classifier_L2)
+        ], weight_decay=hyper_params.classifier_L2, lr=0.0001)
 
      
     if torch.cuda.is_available():
@@ -459,7 +492,7 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
             loss3.backward()
             optimizer2.step()
             optimizer2.zero_grad()
-            if len(batch_losses) % 10 == 0:
+            if len(batch_losses) % 1 == 0:
                 # print(predicted_loss,loss.unsqueeze(1))
                 # print(f"loss prediction loss: {loss3}")
                 # true loss number is number in row (first is highest)
@@ -480,7 +513,7 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
 
                 ##### TEST NDCG #####
                 classifier.eval()
-                test_loss ,kd_mid_test, trans_mid_test, ss_mid_test = train_step( torch.from_numpy(test_X).float().to(device),\
+                test_loss ,kd_mid_test, trans_mid_test, ss_mid_test = eval_step( torch.from_numpy(test_X).float().to(device),\
                                             torch.from_numpy(mapping_test_Y_new).float().to(device),\
                                             torch.from_numpy(test_Y_new).float().to(device))
                 kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
@@ -516,8 +549,8 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     from scipy.stats import linregress
 
     slope, intercept, r_value, p_value, std_err = linregress(x_axis, ndcg_saved)
-    print(slope)
-    print(np.mean(ndcg_saved))
+    print(f"Slope is: {slope*1000}")
+    print(f"Mean NDCG: {np.mean(ndcg_saved)}")
     plt.plot(np.unique(x_axis), np.poly1d(np.polyfit(x_axis, ndcg_saved, 1))(np.unique(x_axis)))
     plt.show()
     # exit()
@@ -609,6 +642,100 @@ def train_label_representation(hyper_params, train_X, mapping_soft_train_Y_new, 
             losses.append(loss.data.mean().item())
     print('complete the label representation')
     return label_representation
+
+class RankHardLoss(torch.nn.Module):
+    """ Loss function  inspired by hard negative triplet loss, directly applied in the rank domain """
+    def __init__(self, sorter_type, seq_len=None, sorter_state_dict=None, margin=0.2, nmax=1):
+        super(RankHardLoss, self).__init__()
+        self.nmax = nmax
+        self.margin = margin
+
+        self.sorter = model_loader(sorter_type, seq_len, sorter_state_dict)
+
+    def hc_loss(self, scores):
+        rank = self.sorter(scores)
+
+        diag = rank.diag()
+
+        rank = rank + torch.diag(torch.ones(rank.diag().size(), device=rank.device) * 50.0)
+
+        sorted_rank, _ = torch.sort(rank, 1, descending=False)
+
+        hard_neg_rank = sorted_rank[:, :self.nmax]
+
+        loss = torch.sum(torch.clamp(-hard_neg_rank + (1.0 / (scores.size(1)) + diag).view(-1, 1).expand_as(hard_neg_rank), min=0))
+
+        return loss
+
+    def forward(self, scores):
+        """ Expect a score matrix with scores of the positive pairs are on the diagonal """
+        caption_loss = self.hc_loss(scores)
+        image_loss = self.hc_loss(scores.t())
+
+        image_caption_loss = caption_loss + image_loss
+
+        return image_caption_loss
+
+# class RankLoss(torch.nn.Module):
+#     """ Loss function  inspired by recall """
+#     def __init__(self, sorter_type, seq_len=None, sorter_state_dict=None,):
+#         super(RankLoss, self).__init__()
+#         self.sorter = model_loader(sorter_type, seq_len, sorter_state_dict)
+
+#     def forward(self, scores):
+#         """ Expect a score matrix with scores of the positive pairs are on the diagonal """
+#         caption_rank = self.sorter(scores)
+#         image_rank = self.sorter(scores.t())
+
+#         image_caption_loss = torch.sum(caption_rank.diag()) + torch.sum(image_rank.diag())
+
+#         return image_caption_loss
+
+
+# class MapRankingLoss(torch.nn.Module):
+#     """ Loss function  inspired by mean Average Precision """
+#     def __init__(self, sorter_type, seq_len=None, sorter_state_dict=None):
+#         super(MapRankingLoss, self).__init__()
+
+#         self.sorter = model_loader(sorter_type, seq_len, sorter_state_dict)
+
+#     def forward(self, output, target):
+#         # Compute map for each classes
+#         map_tot = 0
+#         for c in range(target.size(1)):
+#             gt_c = target[:, c]
+
+#             if torch.sum(gt_c) == 0:
+#                 continue
+#             rank_pred = self.sorter(output[:, c].unsqueeze(0)).view(-1)
+#             rank_pos = rank_pred * gt_c
+
+#             map_tot += torch.sum(rank_pos)
+
+#         return map_tot
+
+
+# class SpearmanLoss(torch.nn.Module):
+#     """ Loss function  inspired by spearmann correlation.self
+#     Required the trained model to have a good initlization.
+#     Set lbd to 1 for a few epoch to help with the initialization.
+#     """
+#     def __init__(self, sorter_type, seq_len=None, sorter_state_dict=None, lbd=0):
+#         super(SpearmanLoss, self).__init__()
+#         self.sorter = model_loader(sorter_type, seq_len, sorter_state_dict)
+
+#         self.criterion_mse = torch.nn.MSELoss()
+#         self.criterionl1 = torch.nn.L1Loss()
+
+#         self.lbd = lbd
+
+#     def forward(self, mem_pred, mem_gt, pr=False):
+#         rank_gt = get_rank(mem_gt)
+
+#         rank_pred = self.sorter(mem_pred.unsqueeze(
+#             0)).view(-1)
+
+#         return self.criterion_mse(rank_pred, rank_gt) + self.lbd * self.criterionl1(mem_pred, mem_gt)
 
 class approxNDCGLoss(nn.Module):
     def __init__(self):

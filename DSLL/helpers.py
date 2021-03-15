@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 
 # Deep Streaming Label Learning
+# Pepijn Sibbes adapted
 
 from torch.autograd import Variable
 import torch
