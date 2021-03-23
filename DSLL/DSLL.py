@@ -4,14 +4,14 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 import torch
-from train import train_S_label_mapping,  train_KD, train_DSLL_model, train_new
+from train import   train_KD, train_DSLL_model, train_new #train_S_label_mapping,
 from helpers import predict, print_predict, LayerActivations
 from params_setting import get_params
 from load_data import load_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, TensorDataset
 
-from model import KnowledgeDistillation_start, IntegratedDSLL, _classifier2
+from model import IntegratedDSLL, _classifier2
 import random
 import numpy as np
 
@@ -38,7 +38,10 @@ if __name__ == '__main__':
     torch.backends.cudnn.deterministic=True
 
     dataset = "yeast"
+    # lower split is less old labels used, higher split is more old labels used
     split=0.5
+
+    # test_Y are old y labels, test_Y_rest are new label indices. 
     train_X, train_Y, train_Y_rest, test_X, test_Y, test_Y_rest = load_dataset(dataset, split)
     hyper_params = get_params(dataset)
 
@@ -74,17 +77,23 @@ if __name__ == '__main__':
     classifier_W_m = torch.load(
         'models/past-label-classifier-upd2').to(hyper_params.device)
     # classifier_W_m = _classifier2(hyper_params)
+    # use this one for training new
+
     # classifier_W_m = train_new(classifier_W_m, train_X, train_Y)
-    # torch.save(classifier_W_m, 'models/past-label-classifier-upd2')   
+    # torch.save(classifier_W_m, 'models/past-label-classifier-upd3')   
 
     classifier_W_m.eval()
-    soft_train_Y = predict(classifier_W_m, train_X)  # sigmoid
+    soft_train_Y = predict(classifier_W_m, train_X)  # sigmoid of forward pass
     # print(soft_train_Y.shape)
     # exit()
+    # old model prediction output are predicted labels of old model
     soft_test_Y = predict(classifier_W_m, test_X)
+    print("soft test shape")
+    print(soft_test_Y.shape)
 
 
     relu_hook_train = LayerActivations(classifier_W_m.W_m, 2)
+    # relu_hook_train = LayerActivations(classifier_W_m.label_mapping, 1)
     # train_X = torch.FloatTensor(train_X).to(hyper_params.device)
     output = classifier_W_m(torch.FloatTensor(train_X).to(hyper_params.device))
     # output = classifier_W_m(train_X)
@@ -101,8 +110,11 @@ if __name__ == '__main__':
     relu_out_test = relu_hook_test.features
 
     hyper_params.KD_epoch = 1
+
+    # knowledge destillation from teacher to new model
     featureKD_model = train_KD(hyper_params, train_X, relu_out_train, test_X, relu_out_test)
 
+    # train_Y and test_Y we know
     # featureKD_model = train_KD(hyper_params, train_X, train_Y, test_X, test_Y)
 
     # Streaming Label Mapping
@@ -111,17 +123,24 @@ if __name__ == '__main__':
     hyper_params.label_mapping_hidden2 = 0
     hyper_params.loss = 'correlation_aware'  # label correlation-aware loss
 
+    # test_Y_rest is unknown, only the test_Y is known
     rest_iterations = train_Y_rest.shape[1]
-    for i in range(1,rest_iterations):
+    for i in range(1, rest_iterations):
         print(f"New Labels number {i} from {rest_iterations}")
+        # these are the to be labelled 
         train_Y_new = train_Y_rest[:, :i+1]
         test_Y_new = test_Y_rest[:, :i+1]
-        train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
+        # print(train_Y_new.shape)
+        # print(test_Y_new.shape)
+        # exit()
+        
+        # define shapes
         hyper_params.M_new = train_Y_new.shape[1]
         hyper_params.label_mapping_output_dim = train_Y_new.shape[1]
         hyper_params.label_representation_output_dim = train_Y_new.shape[1]
         print('apply label mapping')
-        # mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new, soft_test_Y, test_Y_new)
+        # Train_Y is available, soft train Y is predicted by the old classifier at start. Soft test Y is predicted by old class
+        # mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new) # soft_test_Y
         # model_old = torch.load('models/{}mapping'.format(i+2))
         # torch.save(mapping_model, f'models/{i+1}mapping-pep-{split}-upd')  
         mapping_model = torch.load(
@@ -129,9 +148,13 @@ if __name__ == '__main__':
         mapping_train_Y_new = predict(mapping_model, 0.1 * soft_train_Y + 0.9 * train_Y)
         mapping_model.eval()
         mapping_test_Y_new = predict(mapping_model,  soft_test_Y)
+        # print(soft_test_Y.shape)
+        # print(mapping_test_Y_new.shape)
+        # exit()
 
         # Senior Student
         mapping_train_Y_new_tensor = torch.from_numpy(mapping_train_Y_new).float()
+        train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
         train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
         hyper_params.classifier_hidden1 = 200
         hyper_params.classifier_hidden2 = 100

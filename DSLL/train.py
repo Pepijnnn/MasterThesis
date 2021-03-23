@@ -4,8 +4,9 @@
 # Pepijn Sibbes adapted
 
 import sklearn.metrics as metrics
-from model import _label_representation, _S_label_mapping, _classifier, _classifier2, IntegratedModel,\
-    KnowledgeDistillation,  _classifierBatchNorm, _S_label_mapping2, _DNN, _BP_ML, IntegratedDSLL, LossPredictionMod
+from model import _classifier, _classifier2, \
+    KnowledgeDistillation,  _classifierBatchNorm,    IntegratedDSLL, LossPredictionMod
+# _BP_ML,_DNN,IntegratedModel,_label_representation, _S_label_mapping, _S_label_mapping2,
 
 from helpers import predictor_accuracy, precision_at_ks, predict, predict_integrated, \
     print_predict, LayerActivations, modify_state_dict
@@ -118,11 +119,9 @@ def observe_train(hyper_params, classifier, training_losses, train_X, train_Y, t
         print_predict(test_Y, pred_Y, hyper_params)
 
 def train_KD(hyper_params, train_X, train_Y, test_X, test_Y):
-    print("train_KD\ninput and output dims")
+    print(f"train_KD\ninput dim: {hyper_params.KD_input_dim} output dim: {hyper_params.KD_output_dim}")
     hyper_params.KD_input_dim = train_X.shape[1]
     hyper_params.KD_output_dim = train_Y.shape[1]
-    print(hyper_params.KD_input_dim)
-    print(hyper_params.KD_output_dim)
     classifier = KnowledgeDistillation(hyper_params)
     if torch.cuda.is_available():
         classifier = classifier.cuda()
@@ -389,6 +388,8 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     hyper_params.classifier_output_dim = train_Y.shape[1]
     device = hyper_params.device
     hyper_params.model_name = 'DSLL'
+
+    # create new classifier
     classifier = IntegratedDSLL(hyper_params) 
 
     # copy weight information from KnowledgeDistillation 1st layer to IntegratedDSLL first layer
@@ -420,8 +421,9 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     elif hyper_params.loss == 'DIY_entropy':
         criterion = lossAdd
     else:
-        print('please choose loss function (MultiLabelSoftMarginLoss is default)')
-        criterion = nn.MultiLabelSoftMarginLoss(reduction ='none') 
+        #print('please choose loss function (MultiLabelSoftMarginLoss is default)')
+        # criterion = nn.MultiLabelSoftMarginLoss(reduction ='none') 
+        criterion = AsymmetricLoss(reduce=False)
     train_step = make_train_DSLL(classifier, criterion, optimizer)
     eval_step = make_eval_DSLL(classifier, criterion, optimizer)
 
@@ -440,8 +442,8 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     classifier_lpm = LossPredictionMod(hyper_params)
     # optimizer2 = optim.Adam(classifier_lpm.parameters(), weight_decay=hyper_params.classifier_L2)
     optimizer2 = torch.optim.Adam([
-            #{'params':classifier_lpm.Fc1.parameters()},   # , 'lr': 0.0001},
-            #{'params':classifier_lpm.Fc2.parameters()},
+            {'params':classifier_lpm.Fc1.parameters()},   # , 'lr': 0.0001},
+            {'params':classifier_lpm.Fc2.parameters()},
             {'params':classifier_lpm.Fc3.parameters()},
             {'params':classifier_lpm.fc_concat.parameters()},
         ], weight_decay=hyper_params.classifier_L2, lr=0.0001)
@@ -473,66 +475,68 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
             y_batch = y_batch.to(device)
             batch_size = x_batch.shape[0]
             loss ,kd_mid, trans_mid, ss_mid = train_step(x_batch, y_mapping, y_batch)
+            # print(loss)
+            # exit()
             batch_losses.append(loss.mean().item()) #.mean()
 
             # print(kd_mid, trans_mid, ss_mid)
             # copy weights from IntegratedDSLL model to loss prediction model
             # classifier.eval()
 
+            if epoch == 0:
+                optimizer.zero_grad()
+                optimizer2.zero_grad()
+                # Makes predictions detach old loss function (only update over loss prediction module)
+                kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
+                predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
 
-            optimizer.zero_grad()
-            optimizer2.zero_grad()
-            # Makes predictions detach old loss function (only update over loss prediction module)
-            kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
-            predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
+                loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
+                loss3 = loss.mean().detach() + loss2
+                # Computes gradients and updates model
+                loss3.backward()
+                optimizer2.step()
+                optimizer2.zero_grad()
+                if len(batch_losses) % 1 == 0:
+                    # print(predicted_loss,loss.unsqueeze(1))
+                    # print(f"loss prediction loss: {loss3}")
+                    # true loss number is number in row (first is highest)
+                    ndcg_true = np.asarray(loss.unsqueeze(1).cpu().detach().numpy())
+                    ndcg_seq = sorted(ndcg_true)
+                    ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
+                    # compare rank with score higher score is higher confidence so needs to match true loss rank
+                    ndcg_score =  np.asarray(predicted_loss.cpu().detach().numpy())
+                    # right size for the ndcg is (1,batch_size)
+                    ndcg_index.resize(1,batch_size)
+                    ndcg_score.resize(1,batch_size)
+                    # ndcg at half of batch size 
+                    batch_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(batch_size/2))
+                    # TRAIN NDCG SAVED MOVED FOR TEST
+                    # ndcg_saved.append(batch_ndcg)
+                    
+                    # print(f"batch NDCG real score: {batch_ndcg}")
 
-            loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
-            loss3 = loss.mean().detach() + loss2
-            # Computes gradients and updates model
-            loss3.backward()
-            optimizer2.step()
-            optimizer2.zero_grad()
-            if len(batch_losses) % 1 == 0:
-                # print(predicted_loss,loss.unsqueeze(1))
-                # print(f"loss prediction loss: {loss3}")
-                # true loss number is number in row (first is highest)
-                ndcg_true = np.asarray(loss.unsqueeze(1).cpu().detach().numpy())
-                ndcg_seq = sorted(ndcg_true)
-                ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
-                # compare rank with score higher score is higher confidence so needs to match true loss rank
-                ndcg_score =  np.asarray(predicted_loss.cpu().detach().numpy())
-                # right size for the ndcg is (1,batch_size)
-                ndcg_index.resize(1,batch_size)
-                ndcg_score.resize(1,batch_size)
-                # ndcg at half of batch size 
-                batch_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(batch_size/2))
-                # TRAIN NDCG SAVED MOVED FOR TEST
-                # ndcg_saved.append(batch_ndcg)
-                
-                # print(f"batch NDCG real score: {batch_ndcg}")
-
-                ##### TEST NDCG #####
-                classifier.eval()
-                test_loss ,kd_mid_test, trans_mid_test, ss_mid_test = eval_step( torch.from_numpy(test_X).float().to(device),\
-                                            torch.from_numpy(mapping_test_Y_new).float().to(device),\
-                                            torch.from_numpy(test_Y_new).float().to(device))
-                kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
-                predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
-                # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
-                ndcg_true = np.asarray(test_loss.unsqueeze(1).cpu().detach().numpy())
-                ndcg_seq = sorted(ndcg_true)
-                ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
-                # compare rank with score higher score is higher confidence so needs to match true loss rank
-                ndcg_score =  np.asarray(predicted_loss_test.cpu().detach().numpy())
-                # right size for the ndcg is (1,batch_size)
-                ndcg_index.resize(1,test_loss.shape[0])
-                ndcg_score.resize(1,test_loss.shape[0])
-                # ndcg at 10 percent of test size
-                test_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(test_loss.shape[0]*0.1))
-                ndcg_saved.append(test_ndcg)
-                print(f"Test NDCG: {test_ndcg}")
-                classifier.train()
-                # exit()
+                    ##### TEST NDCG #####
+                    classifier.eval()
+                    test_loss ,kd_mid_test, trans_mid_test, ss_mid_test = eval_step( torch.from_numpy(test_X).float().to(device),\
+                                                torch.from_numpy(mapping_test_Y_new).float().to(device),\
+                                                torch.from_numpy(test_Y_new).float().to(device))
+                    kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
+                    predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
+                    # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
+                    ndcg_true = np.asarray(test_loss.unsqueeze(1).cpu().detach().numpy())
+                    ndcg_seq = sorted(ndcg_true)
+                    ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
+                    # compare rank with score higher score is higher confidence so needs to match true loss rank
+                    ndcg_score =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+                    # right size for the ndcg is (1,batch_size)
+                    ndcg_index.resize(1,test_loss.shape[0])
+                    ndcg_score.resize(1,test_loss.shape[0])
+                    # ndcg at 10 percent of test size
+                    test_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(test_loss.shape[0]*0.1))
+                    ndcg_saved.append(test_ndcg)
+                    print(f"Test NDCG: {test_ndcg}")
+                    classifier.train()
+                    # exit()
                 
         
         training_loss = np.mean(batch_losses)
@@ -558,90 +562,136 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     print('complete the training')
     return classifier
 
+class AsymmetricLoss(nn.Module):
+    def __init__(self, reduce=True, gamma_neg=4, gamma_pos=1, clip=0.05, eps=1e-8, disable_torch_grad_focal_loss=False):
+        super(AsymmetricLoss, self).__init__()
+
+        self.gamma_neg = gamma_neg
+        self.gamma_pos = gamma_pos
+        self.clip = clip
+        self.disable_torch_grad_focal_loss = disable_torch_grad_focal_loss
+        self.eps = eps
+        self.reduce=reduce
+
+    def forward(self, x, y):
+        """"
+        Parameters
+        ----------
+        x: input logits
+        y: targets (multi-label binarized vector)
+        """
+        # Calculating Probabilities
+        x_sigmoid = torch.sigmoid(x)
+        xs_pos = x_sigmoid
+        xs_neg = 1 - x_sigmoid
+
+        # Asymmetric Clipping
+        if self.clip is not None and self.clip > 0:
+            xs_neg = (xs_neg + self.clip).clamp(max=1)
+
+        # Basic CE calculation
+        los_pos = y * torch.log(xs_pos.clamp(min=self.eps))
+        los_neg = (1 - y) * torch.log(xs_neg.clamp(min=self.eps))
+        loss = los_pos + los_neg
+
+        # Asymmetric Focusing
+        if self.gamma_neg > 0 or self.gamma_pos > 0:
+            if self.disable_torch_grad_focal_loss:
+                torch._C.set_grad_enabled(False)
+            pt0 = xs_pos * y
+            pt1 = xs_neg * (1 - y)  # pt = p if t > 0 else 1-p
+            pt = pt0 + pt1
+            one_sided_gamma = self.gamma_pos * y + self.gamma_neg * (1 - y)
+            one_sided_w = torch.pow(1 - pt, one_sided_gamma)
+            if self.disable_torch_grad_focal_loss:
+                torch._C.set_grad_enabled(True)
+            loss *= one_sided_w
+        # print(-loss.sum(1))
+        return -loss.sum() if self.reduce == True else -loss.sum(1)
 
 
-def train_S_label_mapping(hyper_params, train_Y, train_Y_new, test_Y, test_Y_new):
-    hyper_params.label_mapping_input_dim = train_Y.shape[1]
-    hyper_params.label_mapping_output_dim = train_Y_new.shape[1]
-    title1 = ['train_S_label_mapping', 'input_dim={}, '.format(hyper_params.label_mapping_input_dim),
-              'output_dim={}, '.format(hyper_params.label_mapping_output_dim),
-              'dropout rate={}, '.format(hyper_params.label_mapping_dropout),
-              'hidden1={}, '.format(hyper_params.label_mapping_hidden1),
-              'hidden2={}, '.format(hyper_params.label_mapping_hidden2),
-              'epoch={}'.format(hyper_params.label_mapping_epoch),  'L2={}'.format(hyper_params.label_mapping_L2)
-              ]
-    print(title1)
-    if hyper_params.label_mapping_hidden2 == 0:
-        S_label_mapping = _S_label_mapping(hyper_params)
-    else:
-        S_label_mapping = _S_label_mapping2(hyper_params)
-    if torch.cuda.is_available():
-        S_label_mapping = S_label_mapping.cuda()
-    optimizer_S = optim.Adam(S_label_mapping.parameters(), weight_decay=hyper_params.label_mapping_L2)
-    criterion_S = nn.MultiLabelSoftMarginLoss()
-    for epoch in range(hyper_params.label_mapping_epoch):
-        losses = []
-        for i, sample in enumerate(train_Y):
-            if torch.cuda.is_available():
-                inputv = Variable(torch.FloatTensor(sample)).view(1, -1).cuda()
-                labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1).cuda()
-            else:
-                inputv = Variable(torch.FloatTensor(sample)).view(1, -1)
-                labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1)
+# def train_S_label_mapping(hyper_params, train_Y, train_Y_new):
+#     hyper_params.label_mapping_input_dim = train_Y.shape[1]
+#     hyper_params.label_mapping_output_dim = train_Y_new.shape[1]
+#     title1 = ['train_S_label_mapping', 'input_dim={}, '.format(hyper_params.label_mapping_input_dim),
+#               'output_dim={}, '.format(hyper_params.label_mapping_output_dim),
+#               'dropout rate={}, '.format(hyper_params.label_mapping_dropout),
+#               'hidden1={}, '.format(hyper_params.label_mapping_hidden1),
+#               'hidden2={}, '.format(hyper_params.label_mapping_hidden2),
+#               'epoch={}'.format(hyper_params.label_mapping_epoch),  'L2={}'.format(hyper_params.label_mapping_L2)
+#               ]
+#     print(f"In label mapping\n{title1}")
+#     if hyper_params.label_mapping_hidden2 == 0:
+#         S_label_mapping = _S_label_mapping(hyper_params)
+#     else:
+#         S_label_mapping = _S_label_mapping2(hyper_params)
+#     if torch.cuda.is_available():
+#         S_label_mapping = S_label_mapping.cuda()
+#     optimizer_S = optim.Adam(S_label_mapping.parameters(), weight_decay=hyper_params.label_mapping_L2)
+#     criterion_S = nn.MultiLabelSoftMarginLoss()
+#     for epoch in range(hyper_params.label_mapping_epoch):
+#         losses = []
+#         for i, sample in enumerate(train_Y):
+#             if torch.cuda.is_available():
+#                 inputv = Variable(torch.FloatTensor(sample)).view(1, -1).cuda()
+#                 labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1).cuda()
+#             else:
+#                 inputv = Variable(torch.FloatTensor(sample)).view(1, -1)
+#                 labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1)
 
-            output = S_label_mapping(inputv)
-            # output = output.sigmoid().round()
-            if hyper_params.loss == 'correlation_aware':
-                loss = criterion_S(output, labelsv) + label_correlation_loss2(output, labelsv)
-            else:
-                loss = criterion_S(output, labelsv)
+#             output = S_label_mapping(inputv)
+#             # output = output.sigmoid().round()
+#             if hyper_params.loss == 'correlation_aware':
+#                 loss = criterion_S(output, labelsv) + label_correlation_loss2(output, labelsv)
+#             else:
+#                 loss = criterion_S(output, labelsv)
 
-            optimizer_S.zero_grad()
-            loss.backward()
-            optimizer_S.step()
-            losses.append(loss.data.mean().item())
-        print('S (label mapping) [%d/%d] Loss: %.3f' % (epoch + 1, hyper_params.label_mapping_epoch, np.mean(losses)))
-    print('complete the label mapping')
-    return S_label_mapping
-
-
-def train_label_representation(hyper_params, train_X, mapping_soft_train_Y_new, train_Y_new, test_X, mapping_soft_test_Y_new, test_Y_new):
-    hyper_params.label_representation_input_dim = train_X.shape[1] + mapping_soft_train_Y_new.shape[1]
-    hyper_params.label_representation_output_dim = train_Y_new.shape[1]
-    label_representation = _label_representation(hyper_params)
-    if torch.cuda.is_available():
-        label_representation = label_representation.cuda()
-    if torch.cuda.device_count() > 1:
-        print("Let's use", torch.cuda.device_count(), "GPUs!")
-        label_representation = nn.DataParallel(label_representation, device_ids=[0, 1])
+#             optimizer_S.zero_grad()
+#             loss.backward()
+#             optimizer_S.step()
+#             losses.append(loss.data.mean().item())
+#         print('S (label mapping) [%d/%d] Loss: %.3f' % (epoch + 1, hyper_params.label_mapping_epoch, np.mean(losses)))
+#     print('complete the label mapping')
+#     return S_label_mapping
 
 
-    optimizer_label_repre = optim.Adam(label_representation.parameters(),
-                                       weight_decay=hyper_params.label_representation_L2)
-    criterion_label_repre = nn.MultiLabelSoftMarginLoss()  # nn.MultiLabelSoftMarginLoss()
-    train_input = np.hstack((train_X, mapping_soft_train_Y_new))
-    train_output_true = train_Y_new
-    test_input = np.hstack((test_X, mapping_soft_test_Y_new))
-    test_output_true = test_Y_new
-    for epoch in range(hyper_params.label_representation_epoch):
-        losses = []
-        for i, sample in enumerate(train_input):
-            if torch.cuda.is_available():
-                inputv = Variable(torch.FloatTensor(sample)).view(1, -1).cuda()
-                labelsv = Variable(torch.FloatTensor(train_output_true[i])).view(1, -1).cuda()
-            else:
-                inputv = Variable(torch.FloatTensor(sample)).view(1, -1)
-                labelsv = Variable(torch.FloatTensor(train_output_true[i])).view(1, -1)
+# def train_label_representation(hyper_params, train_X, mapping_soft_train_Y_new, train_Y_new, test_X, mapping_soft_test_Y_new, test_Y_new):
+#     hyper_params.label_representation_input_dim = train_X.shape[1] + mapping_soft_train_Y_new.shape[1]
+#     hyper_params.label_representation_output_dim = train_Y_new.shape[1]
+#     label_representation = _label_representation(hyper_params)
+#     if torch.cuda.is_available():
+#         label_representation = label_representation.cuda()
+#     if torch.cuda.device_count() > 1:
+#         print("Let's use", torch.cuda.device_count(), "GPUs!")
+#         label_representation = nn.DataParallel(label_representation, device_ids=[0, 1])
 
-            output = label_representation(inputv)
-            loss = criterion_label_repre(output, labelsv)
 
-            optimizer_label_repre.zero_grad()
-            loss.backward()
-            optimizer_label_repre.step()
-            losses.append(loss.data.mean().item())
-    print('complete the label representation')
-    return label_representation
+#     optimizer_label_repre = optim.Adam(label_representation.parameters(),
+#                                        weight_decay=hyper_params.label_representation_L2)
+#     criterion_label_repre = nn.MultiLabelSoftMarginLoss()  # nn.MultiLabelSoftMarginLoss()
+#     train_input = np.hstack((train_X, mapping_soft_train_Y_new))
+#     train_output_true = train_Y_new
+#     test_input = np.hstack((test_X, mapping_soft_test_Y_new))
+#     test_output_true = test_Y_new
+#     for epoch in range(hyper_params.label_representation_epoch):
+#         losses = []
+#         for i, sample in enumerate(train_input):
+#             if torch.cuda.is_available():
+#                 inputv = Variable(torch.FloatTensor(sample)).view(1, -1).cuda()
+#                 labelsv = Variable(torch.FloatTensor(train_output_true[i])).view(1, -1).cuda()
+#             else:
+#                 inputv = Variable(torch.FloatTensor(sample)).view(1, -1)
+#                 labelsv = Variable(torch.FloatTensor(train_output_true[i])).view(1, -1)
+
+#             output = label_representation(inputv)
+#             loss = criterion_label_repre(output, labelsv)
+
+#             optimizer_label_repre.zero_grad()
+#             loss.backward()
+#             optimizer_label_repre.step()
+#             losses.append(loss.data.mean().item())
+#     print('complete the label representation')
+#     return label_representation
 
 class RankHardLoss(torch.nn.Module):
     """ Loss function  inspired by hard negative triplet loss, directly applied in the rank domain """
@@ -1020,7 +1070,7 @@ class DIYloss(nn.Module):
         super(DIYloss, self).__init__()
         return
     def forward(self, pred_Y, true_Y):
-        mseLoss = nn.MSELoss()
+        mseLoss = nn.MSELoss(reduction='none')
         pred_Y = torch.sigmoid(pred_Y)
         n_one_true = int(torch.sum(true_Y))
         n_zero_true = true_Y.shape[1] - n_one_true

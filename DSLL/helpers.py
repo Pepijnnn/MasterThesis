@@ -32,6 +32,7 @@ def split_train(data,test_ratio):
 
 def split_label(data, past_label_num_ratio):   # full-label Y data, past_label_ratio
     np.random.seed(22) # from 95
+    # array of shufled indices
     shuffled_indices = np.random.permutation(data.shape[1])
     past_label_indices = shuffled_indices[:int(data.shape[1]*past_label_num_ratio)]
     new_label_indices = shuffled_indices[int(data.shape[1]*past_label_num_ratio):] #why +1
