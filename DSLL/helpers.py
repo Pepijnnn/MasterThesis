@@ -103,8 +103,13 @@ def predict(model, input_X):
 
 def print_predict(ground_truth, prediction, hyper_params):
     rounded = 4
-    AUC_macro = round(roc_auc_score(ground_truth, prediction, average='macro'), rounded)
-    AUC_micro = round(roc_auc_score(ground_truth, prediction, average='micro'), rounded)
+    print(ground_truth.shape, prediction.shape)
+    try:
+        AUC_macro = round(roc_auc_score(ground_truth, prediction, average='macro'), rounded)
+        AUC_micro = round(roc_auc_score(ground_truth, prediction, average='micro'), rounded)
+    except:
+        # ValueError, only 1 class present
+        AUC_macro, AUC_micro = 0.0, 0.0
     Coverage_error = round((coverage_error(ground_truth, prediction)) / ground_truth.shape[1], rounded)
     rankloss = round(label_ranking_loss(ground_truth, prediction), rounded)
     One_error = round(one_error(ground_truth, prediction), rounded)
@@ -116,8 +121,10 @@ def print_predict(ground_truth, prediction, hyper_params):
     thresh = 0.5
     print(f"Threshold at {thresh}")
     prediction = np.where(prediction > thresh, 1, 0) # same as round but with 0.4
-
+    # print(ground_truth)
+    # print(prediction)
     F1_Micro = round(f1_score(ground_truth, prediction, average='micro'), rounded)
+    F1_Macro = round(f1_score(ground_truth, prediction, average='macro'), rounded)
     Hamming_loss = round(hamming_loss(ground_truth, prediction), rounded)
     Accuracy = round(accuracy_score(ground_truth, prediction), rounded)
     Recall_score_macro = round(recall_score(ground_truth, prediction, average='macro'), rounded)
@@ -139,6 +146,7 @@ def print_predict(ground_truth, prediction, hyper_params):
     print('Log_loss:  ', Log_loss)
     print('Average_precision_score: ', Average_precision_score)
     print('F1_Micro ', F1_Micro)
+    print('F1_Macro ', F1_Macro)
     print('One_error: ', One_error)
     print('Ranking loss: ', rankloss)
     print('coverage: ', Coverage_error)
@@ -146,6 +154,7 @@ def print_predict(ground_truth, prediction, hyper_params):
     print('AUC-macro:   ', AUC_macro)
 
     print('\n')
+    return [F1_Micro, F1_Macro, AUC_micro, AUC_macro]
 
 def predict_integrated(model, input_X, input_mapping_Y_new):
     model.eval()

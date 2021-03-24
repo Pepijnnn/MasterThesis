@@ -5,6 +5,7 @@
 
 import torch.nn as nn
 import torch
+import torch.nn.functional as F
 
 class KnowledgeDistillation(nn.Module):
     def __init__(self, hyper_params):
@@ -46,25 +47,25 @@ class LossPredictionMod(nn.Module):
     def __init__(self, hyper_params):
         super(LossPredictionMod, self).__init__()
         self.Fc1 = nn.Sequential(
-            nn.Linear(hyper_params.classifier_hidden2, hyper_params.label_mapping_hidden1),
+            nn.Linear(hyper_params.classifier_hidden2, hyper_params.loss_prediction_hidden),
             nn.Dropout(hyper_params.classifier_dropout),
             nn.ReLU(),
         )
         
         self.Fc2 = nn.Sequential(
-            nn.Linear(hyper_params.label_mapping_output_dim * 4, hyper_params.label_mapping_hidden1),
+            nn.Linear(hyper_params.label_mapping_output_dim * 4, hyper_params.loss_prediction_hidden),
             nn.Dropout(hyper_params.classifier_dropout),
             nn.ReLU(),
         )
         self.Fc3 = nn.Sequential(
-            nn.Linear(hyper_params.label_representation_output_dim, hyper_params.label_mapping_hidden1),
+            nn.Linear(hyper_params.label_representation_output_dim, hyper_params.loss_prediction_hidden),
             nn.Dropout(hyper_params.classifier_dropout),
             nn.ReLU(),
         )
         
         # * 3 depends of how many layers used
         self.fc_concat = nn.Sequential(
-            nn.Linear(hyper_params.label_mapping_hidden1 * 3, 1),
+            nn.Linear(hyper_params.loss_prediction_hidden * 3, 1),
             # nn.ReLU(),
         )
 
@@ -150,6 +151,24 @@ class _S_label_mapping(nn.Module):
 
     def forward(self, input):
         return self.label_mapping(input)
+
+class MarginRankingLoss_learning_loss(nn.Module):
+    def __init__(self, margin=1.0):
+        super(MarginRankingLoss_learning_loss, self).__init__()
+        self.margin = margin
+    def forward(self, inputs, targets):
+        random = torch.randperm(inputs.size(0))
+        pred_loss = inputs[random]
+        pred_lossi = inputs[:inputs.size(0)//2]
+        pred_lossj = inputs[inputs.size(0)//2:]
+        target_loss = targets.reshape(inputs.size(0), 1)
+        target_loss = target_loss[random]
+        target_lossi = target_loss[:inputs.size(0)//2]
+        target_lossj = target_loss[inputs.size(0)//2:]
+        final_target = torch.sign(target_lossi - target_lossj)
+        
+        return F.margin_ranking_loss(pred_lossi, pred_lossj, final_target, margin=self.margin, reduction='mean')
+        
 
 
 # class _S_label_mapping2(nn.Module):

@@ -28,29 +28,31 @@ hyper_params.changeloss = False
 
 def get_params(dataset_name):
     hyper_params.dataset_name = dataset_name
-    if dataset_name == 'yeast':
-        hyper_params.classifier_dropout = 0.1
-        hyper_params.label_mapping_dropout = 0.1
-        hyper_params.label_representation_dropout = 0.1
-        hyper_params.classifier_L2 = 1e-08
-        hyper_params.label_mapping_L2 = 1e-08
-        hyper_params.label_representation_L2 = 1e-08
+    # if dataset_name == 'yeast':
+    hyper_params.classifier_dropout = 0.1
+    hyper_params.label_mapping_dropout = 0.1
+    hyper_params.label_representation_dropout = 0.1
+    hyper_params.classifier_L2 = 1e-08
+    hyper_params.label_mapping_L2 = 1e-08
+    hyper_params.label_representation_L2 = 1e-08
 
-        hyper_params.classifier_hidden1 = 200
-        hyper_params.classifier_hidden2 = 100
-        hyper_params.label_mapping_hidden1 = 64
-        hyper_params.label_mapping_hidden2 = 0
-        hyper_params.label_representation_hidden1 = 200
-        hyper_params.label_representation_hidden2 = 100
+    hyper_params.classifier_hidden1 = 200
+    hyper_params.classifier_hidden2 = 100
+    hyper_params.label_mapping_hidden1 = 64
+    hyper_params.label_mapping_hidden2 = 0
+    hyper_params.label_representation_hidden1 = 200
+    hyper_params.label_representation_hidden2 = 100
 
-        hyper_params.KD_hidden1 = 200
-        hyper_params.KD_hidden2 = 100
-        hyper_params.KD_epoch = 20
-        hyper_params.KD_L2 = 1e-08
-        hyper_params.KD_dropout = 0.1
+    hyper_params.loss_prediction_hidden = 128
 
-        hyper_params.classifier_epoch = 10
-        hyper_params.label_mapping_epoch = 20
-        hyper_params.label_representation_epoch = 50
+    hyper_params.KD_hidden1 = 200
+    hyper_params.KD_hidden2 = 100
+    hyper_params.KD_epoch = 20
+    hyper_params.KD_L2 = 1e-08
+    hyper_params.KD_dropout = 0.1
+
+    hyper_params.classifier_epoch = 1 #10
+    hyper_params.label_mapping_epoch = 1 #20
+    hyper_params.label_representation_epoch = 50
     return hyper_params
 

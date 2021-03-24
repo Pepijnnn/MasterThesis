@@ -5,7 +5,7 @@
 
 import sklearn.metrics as metrics
 from model import _classifier, _classifier2, \
-    KnowledgeDistillation,  _classifierBatchNorm,    IntegratedDSLL, LossPredictionMod
+    KnowledgeDistillation,  _classifierBatchNorm,    IntegratedDSLL, LossPredictionMod, MarginRankingLoss_learning_loss, _S_label_mapping
 # _BP_ML,_DNN,IntegratedModel,_label_representation, _S_label_mapping, _S_label_mapping2,
 
 from helpers import predictor_accuracy, precision_at_ks, predict, predict_integrated, \
@@ -95,13 +95,15 @@ def observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mappi
         # print("ashdsh")
         # print(train_Y_new)
         # exit()
-        print_predict(train_Y_new, pred_Y_train, hyper_params)
+        _ = print_predict(train_Y_new, pred_Y_train, hyper_params)
 
-    if (((hyper_params.currentEpoch + 1) % 5 == 0) | (hyper_params.currentEpoch < 10)):
-        print('test performance')
-        pred_Y = predict_integrated(classifier, test_X, mapping_test_Y_new)
-        # pred_Y = pred_Y.round()
-        print_predict(test_Y_new, pred_Y, hyper_params)
+    # if (((hyper_params.currentEpoch + 1) % 5 == 0) | (hyper_params.currentEpoch < 10)):
+    print('test performance')
+    pred_Y = predict_integrated(classifier, test_X, mapping_test_Y_new)
+    # pred_Y = pred_Y.round()
+    measurements = print_predict(test_Y_new, pred_Y, hyper_params)
+    return measurements
+    # return None
 
 
 def observe_train(hyper_params, classifier, training_losses, train_X, train_Y, test_X, test_Y):
@@ -111,12 +113,12 @@ def observe_train(hyper_params, classifier, training_losses, train_X, train_Y, t
                                                          == hyper_params.classifier_epoch)):
         print('train performance')
         pred_Y_train = predict(classifier, train_X)
-        print_predict(train_Y, pred_Y_train, hyper_params)
+        _ = print_predict(train_Y, pred_Y_train, hyper_params)
 
     if (((hyper_params.currentEpoch + 1) % 5 == 0) | (hyper_params.currentEpoch < 10)):
         print('test performance')
         pred_Y = predict(classifier, test_X)
-        print_predict(test_Y, pred_Y, hyper_params)
+        measurements = print_predict(test_Y, pred_Y, hyper_params)
 
 def train_KD(hyper_params, train_X, train_Y, test_X, test_Y):
     print(f"train_KD\ninput dim: {hyper_params.KD_input_dim} output dim: {hyper_params.KD_output_dim}")
@@ -351,12 +353,7 @@ def make_train_DSLL(model, loss_fn, optimizer):
         optimizer.zero_grad()
         # Makes predictions
         yhat, kd_mid, trans_mid, ss_mid = model(x,y_mapping)
-        # print(yhat.shape,y.shape)
         loss = loss_fn(yhat, y)
-        # print("dit is los item")
-        # print(loss)
-        # print(loss.mean())
-        # print("this is loss item")
         # Computes gradients
         loss.mean().backward()
         # loss.backward()
@@ -424,7 +421,8 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
         #print('please choose loss function (MultiLabelSoftMarginLoss is default)')
         # criterion = nn.MultiLabelSoftMarginLoss(reduction ='none') 
         criterion = AsymmetricLoss(reduce=False)
-    train_step = make_train_DSLL(classifier, criterion, optimizer)
+
+    # train_step = make_train_DSLL(classifier, criterion, optimizer)
     eval_step = make_eval_DSLL(classifier, criterion, optimizer)
 
     # lp_criterion = approxNDCGLoss()
@@ -432,7 +430,8 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     # lp_criterion = ListNetLoss()
     # lp_criterion = ListMLELoss()
 
-    lp_criterion = RMSELoss()
+    # lp_criterion = RMSELoss()
+    lp_criterion = MarginRankingLoss_learning_loss()
 
     # lp_criterion = RankLoss()
     # lp_criterion = MapRankingLoss()
@@ -451,17 +450,18 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
      
     if torch.cuda.is_available():
         classifier_lpm = classifier_lpm.cuda()
-    activation = {}
-    # def get_activation(name):
-    #     # print("INN")
-    #     def hook(model, input, output):
-    #         activation[name] = output.detach()
-    #         print("INN")
-    #         print(output.detach())
-    #     return hook
+    # if ac:
+        activation = {}
+        def get_activation(name):
+            # print("INN")
+            def hook(model, input, output):
+                activation[name] = output.detach()
+                print("INN")
+                print(output.detach())
+            return hook
 
 
-    training_losses = []
+    training_losses, full_losses, full_measurements = [], [], []
 
     # for each epoch
     x_axis, ndcg_saved = [], []
@@ -474,7 +474,30 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
             y_mapping = y_mapping.to(device)
             y_batch = y_batch.to(device)
             batch_size = x_batch.shape[0]
-            loss ,kd_mid, trans_mid, ss_mid = train_step(x_batch, y_mapping, y_batch)
+
+            # loss, kd_mid, trans_mid, ss_mid = train_step(x_batch, y_mapping, y_batch)
+            
+            classifier.train()
+            optimizer.zero_grad()
+            optimizer2.zero_grad()
+            yhat, kd_mid, trans_mid, ss_mid = classifier(x_batch,y_mapping)
+            loss = criterion(yhat, y_batch)
+            loss.mean().backward()
+            optimizer.step()
+            # training_losses.append(loss.mean().detach())
+            # loss_predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
+            # if epoch <= 1:
+            #     loss2 = lp_criterion(loss_predicted_loss, loss.unsqueeze(1))
+            #     calc_loss = loss.mean() + loss2
+            #     calc_loss.backward()
+            #     optimizer2.step()
+            #     optimizer.step()
+            # else:
+            #     calc_loss = loss.mean()
+            #     calc_loss.backward()
+            #     optimizer.step()
+            
+
             # print(loss)
             # exit()
             batch_losses.append(loss.mean().item()) #.mean()
@@ -482,80 +505,110 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
             # print(kd_mid, trans_mid, ss_mid)
             # copy weights from IntegratedDSLL model to loss prediction model
             # classifier.eval()
+            if epoch <= 10 and len(batch_losses) % 5 == 0:
+                measurements = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
+                            mapping_test_Y_new, test_Y_new)
+                if measurements != None:
+                    full_measurements.append(measurements)
 
-            if epoch == 0:
+            # how many epochs does the loss module train
+            if epoch <= 1:
                 optimizer.zero_grad()
                 optimizer2.zero_grad()
+
                 # Makes predictions detach old loss function (only update over loss prediction module)
                 kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
                 predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
 
                 loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
                 loss3 = loss.mean().detach() + loss2
+
                 # Computes gradients and updates model
                 loss3.backward()
                 optimizer2.step()
                 optimizer2.zero_grad()
-                if len(batch_losses) % 1 == 0:
+                # if len(batch_losses) % 1 == 0:
                     # print(predicted_loss,loss.unsqueeze(1))
                     # print(f"loss prediction loss: {loss3}")
+                    
+                    #### TRAIN NDCG #####
                     # true loss number is number in row (first is highest)
-                    ndcg_true = np.asarray(loss.unsqueeze(1).cpu().detach().numpy())
-                    ndcg_seq = sorted(ndcg_true)
-                    ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
+                    # ndcg_true = np.asarray(loss.unsqueeze(1).cpu().detach().numpy())
+                    # ndcg_seq = sorted(ndcg_true)
+                    # ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
+
                     # compare rank with score higher score is higher confidence so needs to match true loss rank
-                    ndcg_score =  np.asarray(predicted_loss.cpu().detach().numpy())
+                    # ndcg_score =  np.asarray(predicted_loss.cpu().detach().numpy())
+
                     # right size for the ndcg is (1,batch_size)
-                    ndcg_index.resize(1,batch_size)
-                    ndcg_score.resize(1,batch_size)
+                    # ndcg_index.resize(1,batch_size)
+                    # ndcg_score.resize(1,batch_size)
+
                     # ndcg at half of batch size 
-                    batch_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(batch_size/2))
+                    # batch_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(batch_size/2))
                     # TRAIN NDCG SAVED MOVED FOR TEST
                     # ndcg_saved.append(batch_ndcg)
                     
                     # print(f"batch NDCG real score: {batch_ndcg}")
 
                     ##### TEST NDCG #####
-                    classifier.eval()
-                    test_loss ,kd_mid_test, trans_mid_test, ss_mid_test = eval_step( torch.from_numpy(test_X).float().to(device),\
-                                                torch.from_numpy(mapping_test_Y_new).float().to(device),\
-                                                torch.from_numpy(test_Y_new).float().to(device))
-                    kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
-                    predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
-                    # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
-                    ndcg_true = np.asarray(test_loss.unsqueeze(1).cpu().detach().numpy())
-                    ndcg_seq = sorted(ndcg_true)
-                    ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
-                    # compare rank with score higher score is higher confidence so needs to match true loss rank
-                    ndcg_score =  np.asarray(predicted_loss_test.cpu().detach().numpy())
-                    # right size for the ndcg is (1,batch_size)
-                    ndcg_index.resize(1,test_loss.shape[0])
-                    ndcg_score.resize(1,test_loss.shape[0])
-                    # ndcg at 10 percent of test size
-                    test_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(test_loss.shape[0]*0.1))
-                    ndcg_saved.append(test_ndcg)
-                    print(f"Test NDCG: {test_ndcg}")
-                    classifier.train()
-                    # exit()
+                    # classifier.eval()
+                    # test_loss ,kd_mid_test, trans_mid_test, ss_mid_test = eval_step( torch.from_numpy(test_X).float().to(device),\
+                    #                             torch.from_numpy(mapping_test_Y_new).float().to(device),\
+                    #                             torch.from_numpy(test_Y_new).float().to(device))
+                    # kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
+                    # predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
+                    # # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
+                    # ndcg_true = np.asarray(test_loss.unsqueeze(1).cpu().detach().numpy())
+                    # ndcg_seq = sorted(ndcg_true)
+                    # ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
+
+                    # # compare rank with score higher score is higher confidence so needs to match true loss rank
+                    # ndcg_score =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+
+                    # # right size for the ndcg is (1,batch_size)
+                    # ndcg_index.resize(1,test_loss.shape[0])
+                    # ndcg_score.resize(1,test_loss.shape[0])
+
+                    # # ndcg at 10 percent of test size
+                    # test_ndcg = metrics.ndcg_score(ndcg_index,ndcg_score, k=int(test_loss.shape[0]*0.1))
+                    # ndcg_saved.append(test_ndcg)
+                    # print(f"Test NDCG: {test_ndcg}")
+                    # classifier.train()
                 
-        
+        full_losses.append(batch_losses)
         training_loss = np.mean(batch_losses)
         training_losses.append(training_loss)
 
-        observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
+        measurements2 = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
                            mapping_test_Y_new, test_Y_new)
+        if measurements != None:
+            print(measurements)
+            full_measurements.append(measurements)
 
-    x_axis = [i for i in range(len(ndcg_saved))]
+    # print(full_losses)
+    # print losses figure
+    # [F1_Micro, F1_Macro, AUC_micro, AUC_macro]
+    F1_Micro = np.hstack(np.array(full_measurements)[:,0])
+    F1_Macro = np.hstack(np.array(full_measurements)[:,1])
+    AUC_micro = np.hstack(np.array(full_measurements)[:,2])
+    AUC_macro = np.hstack(np.array(full_measurements)[:,3])
+    x_axis = [i for i in range(len(F1_Micro))]
     import matplotlib.pyplot as plt
-    plt.plot(x_axis, ndcg_saved)
-    plt.xlabel('instances', fontsize=18)
-    plt.ylabel('ndcg', fontsize=16)
-    from scipy.stats import linregress
+    plt.plot(x_axis, F1_Micro, label='F1_Micro')
+    plt.plot(x_axis, F1_Macro, label='F1_Macro')
+    plt.plot(x_axis, AUC_micro, label='AUC_micro')
+    plt.plot(x_axis, AUC_macro, label='AUC_macro')
+    plt.xlabel('Instances', fontsize=18)
+    plt.ylabel('Values', fontsize=16)
+    plt.ylim(0, 1)
+    # from scipy.stats import linregress
 
-    slope, intercept, r_value, p_value, std_err = linregress(x_axis, ndcg_saved)
-    print(f"Slope is: {slope*1000}")
-    print(f"Mean NDCG: {np.mean(ndcg_saved)}")
-    plt.plot(np.unique(x_axis), np.poly1d(np.polyfit(x_axis, ndcg_saved, 1))(np.unique(x_axis)))
+    # slope, intercept, r_value, p_value, std_err = linregress(x_axis, F1_Micro)
+    # print(f"Slope is: {slope*1000}")
+    # print(f"Mean NDCG: {np.mean(F1_Micro)}")
+    # plt.plot(np.unique(x_axis), np.poly1d(np.polyfit(x_axis, F1_Micro, 1))(np.unique(x_axis)))
+    plt.legend(bbox_to_anchor=(1,1), loc="upper left")
     plt.show()
     # exit()
 
@@ -571,7 +624,7 @@ class AsymmetricLoss(nn.Module):
         self.clip = clip
         self.disable_torch_grad_focal_loss = disable_torch_grad_focal_loss
         self.eps = eps
-        self.reduce=reduce
+        self.reduce = reduce
 
     def forward(self, x, y):
         """"
@@ -610,49 +663,49 @@ class AsymmetricLoss(nn.Module):
         return -loss.sum() if self.reduce == True else -loss.sum(1)
 
 
-# def train_S_label_mapping(hyper_params, train_Y, train_Y_new):
-#     hyper_params.label_mapping_input_dim = train_Y.shape[1]
-#     hyper_params.label_mapping_output_dim = train_Y_new.shape[1]
-#     title1 = ['train_S_label_mapping', 'input_dim={}, '.format(hyper_params.label_mapping_input_dim),
-#               'output_dim={}, '.format(hyper_params.label_mapping_output_dim),
-#               'dropout rate={}, '.format(hyper_params.label_mapping_dropout),
-#               'hidden1={}, '.format(hyper_params.label_mapping_hidden1),
-#               'hidden2={}, '.format(hyper_params.label_mapping_hidden2),
-#               'epoch={}'.format(hyper_params.label_mapping_epoch),  'L2={}'.format(hyper_params.label_mapping_L2)
-#               ]
-#     print(f"In label mapping\n{title1}")
-#     if hyper_params.label_mapping_hidden2 == 0:
-#         S_label_mapping = _S_label_mapping(hyper_params)
-#     else:
-#         S_label_mapping = _S_label_mapping2(hyper_params)
-#     if torch.cuda.is_available():
-#         S_label_mapping = S_label_mapping.cuda()
-#     optimizer_S = optim.Adam(S_label_mapping.parameters(), weight_decay=hyper_params.label_mapping_L2)
-#     criterion_S = nn.MultiLabelSoftMarginLoss()
-#     for epoch in range(hyper_params.label_mapping_epoch):
-#         losses = []
-#         for i, sample in enumerate(train_Y):
-#             if torch.cuda.is_available():
-#                 inputv = Variable(torch.FloatTensor(sample)).view(1, -1).cuda()
-#                 labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1).cuda()
-#             else:
-#                 inputv = Variable(torch.FloatTensor(sample)).view(1, -1)
-#                 labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1)
+def train_S_label_mapping(hyper_params, train_Y, train_Y_new):
+    hyper_params.label_mapping_input_dim = train_Y.shape[1]
+    hyper_params.label_mapping_output_dim = train_Y_new.shape[1]
+    title1 = ['train_S_label_mapping', 'input_dim={}, '.format(hyper_params.label_mapping_input_dim),
+              'output_dim={}, '.format(hyper_params.label_mapping_output_dim),
+              'dropout rate={}, '.format(hyper_params.label_mapping_dropout),
+              'hidden1={}, '.format(hyper_params.label_mapping_hidden1),
+              'hidden2={}, '.format(hyper_params.label_mapping_hidden2),
+              'epoch={}'.format(hyper_params.label_mapping_epoch),  'L2={}'.format(hyper_params.label_mapping_L2)
+              ]
+    print(f"In label mapping\n{title1}")
+    if hyper_params.label_mapping_hidden2 == 0:
+        S_label_mapping = _S_label_mapping(hyper_params)
+    else:
+        S_label_mapping = _S_label_mapping2(hyper_params)
+    if torch.cuda.is_available():
+        S_label_mapping = S_label_mapping.cuda()
+    optimizer_S = optim.Adam(S_label_mapping.parameters(), weight_decay=hyper_params.label_mapping_L2)
+    criterion_S = nn.MultiLabelSoftMarginLoss()
+    for epoch in range(hyper_params.label_mapping_epoch):
+        losses = []
+        for i, sample in enumerate(train_Y):
+            if torch.cuda.is_available():
+                inputv = Variable(torch.FloatTensor(sample)).view(1, -1).cuda()
+                labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1).cuda()
+            else:
+                inputv = Variable(torch.FloatTensor(sample)).view(1, -1)
+                labelsv = Variable(torch.FloatTensor(train_Y_new[i])).view(1, -1)
 
-#             output = S_label_mapping(inputv)
-#             # output = output.sigmoid().round()
-#             if hyper_params.loss == 'correlation_aware':
-#                 loss = criterion_S(output, labelsv) + label_correlation_loss2(output, labelsv)
-#             else:
-#                 loss = criterion_S(output, labelsv)
+            output = S_label_mapping(inputv)
+            # output = output.sigmoid().round()
+            if hyper_params.loss == 'correlation_aware':
+                loss = criterion_S(output, labelsv) + label_correlation_loss2(output, labelsv)
+            else:
+                loss = criterion_S(output, labelsv)
 
-#             optimizer_S.zero_grad()
-#             loss.backward()
-#             optimizer_S.step()
-#             losses.append(loss.data.mean().item())
-#         print('S (label mapping) [%d/%d] Loss: %.3f' % (epoch + 1, hyper_params.label_mapping_epoch, np.mean(losses)))
-#     print('complete the label mapping')
-#     return S_label_mapping
+            optimizer_S.zero_grad()
+            loss.backward()
+            optimizer_S.step()
+            losses.append(loss.data.mean().item())
+        print('S (label mapping) [%d/%d] Loss: %.3f' % (epoch + 1, hyper_params.label_mapping_epoch, np.mean(losses)))
+    print('complete the label mapping')
+    return S_label_mapping
 
 
 # def train_label_representation(hyper_params, train_X, mapping_soft_train_Y_new, train_Y_new, test_X, mapping_soft_test_Y_new, test_Y_new):

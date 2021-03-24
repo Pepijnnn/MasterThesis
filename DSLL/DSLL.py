@@ -4,7 +4,7 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 import torch
-from train import   train_KD, train_DSLL_model, train_new #train_S_label_mapping,
+from train import   train_KD, train_DSLL_model, train_new, train_S_label_mapping
 from helpers import predict, print_predict, LayerActivations
 from params_setting import get_params
 from load_data import load_dataset
@@ -28,7 +28,7 @@ class CustomDataset(Dataset):
         return len(self.x)
 
 if __name__ == '__main__':
-    seednr = 121 #123
+    seednr = 120 #123
     random.seed(seednr)
     torch.manual_seed(seednr)
     torch.cuda.manual_seed(seednr)
@@ -37,7 +37,8 @@ if __name__ == '__main__':
     torch.backends.cudnn.enabled=False
     torch.backends.cudnn.deterministic=True
 
-    dataset = "yeast"
+    dataset = "nus"
+    
     # lower split is less old labels used, higher split is more old labels used
     split=0.5
 
@@ -65,6 +66,10 @@ if __name__ == '__main__':
     hyper_params.KD_output_dim = 200
     hyper_params.label_mapping_output_dim = train_Y.shape[1]
     hyper_params.label_representation_output_dim = train_Y.shape[1]
+
+    if dataset == "nus":
+        hyper_params.classifier_hidden1 = 512
+        hyper_params.classifier_hidden2 = 256
     title1 = {dataset, 'N = {}'.format(hyper_params.N), 'D = {}'.format(hyper_params.D), 'M = {}'.format(hyper_params.M),
             'N_test = {}'.format(hyper_params.N_test)}
     print(title1)
@@ -74,12 +79,13 @@ if __name__ == '__main__':
     print('\n****************** Streaming Feature Distillation ******************\n')
     print('load past-label classifer\n')
     # model_old = torch.load('models/past-label-classifier')
-    classifier_W_m = torch.load(
-        'models/past-label-classifier-upd2').to(hyper_params.device)
-    # classifier_W_m = _classifier2(hyper_params)
-    # use this one for training new
-
-    # classifier_W_m = train_new(classifier_W_m, train_X, train_Y)
+    # yeast model pretrained
+    if dataset == "yeast":
+        classifier_W_m = torch.load(
+            'models/past-label-classifier-upd2').to(hyper_params.device)
+    else:
+        classifier_W_m = _classifier2(hyper_params)
+        classifier_W_m = train_new(classifier_W_m, train_X, train_Y)
     # torch.save(classifier_W_m, 'models/past-label-classifier-upd3')   
 
     classifier_W_m.eval()
@@ -125,7 +131,11 @@ if __name__ == '__main__':
 
     # test_Y_rest is unknown, only the test_Y is known
     rest_iterations = train_Y_rest.shape[1]
-    for i in range(1, rest_iterations):
+    if dataset == "nus":
+        start_iterations = rest_iterations-5
+    else:
+        start_iterations = 1
+    for i in range(start_iterations, rest_iterations):
         print(f"New Labels number {i} from {rest_iterations}")
         # these are the to be labelled 
         train_Y_new = train_Y_rest[:, :i+1]
@@ -140,11 +150,12 @@ if __name__ == '__main__':
         hyper_params.label_representation_output_dim = train_Y_new.shape[1]
         print('apply label mapping')
         # Train_Y is available, soft train Y is predicted by the old classifier at start. Soft test Y is predicted by old class
-        # mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new) # soft_test_Y
+        mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new) # soft_test_Y
         # model_old = torch.load('models/{}mapping'.format(i+2))
         # torch.save(mapping_model, f'models/{i+1}mapping-pep-{split}-upd')  
-        mapping_model = torch.load(
-            f'models/{i+1}mapping-pep-{split}-upd')
+        # pepijn model:
+        # mapping_model = torch.load(
+        #     f'models/{i+1}mapping-pep-{split}-upd')
         mapping_train_Y_new = predict(mapping_model, 0.1 * soft_train_Y + 0.9 * train_Y)
         mapping_model.eval()
         mapping_test_Y_new = predict(mapping_model,  soft_test_Y)
@@ -156,8 +167,7 @@ if __name__ == '__main__':
         mapping_train_Y_new_tensor = torch.from_numpy(mapping_train_Y_new).float()
         train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
         train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
-        hyper_params.classifier_hidden1 = 200
-        hyper_params.classifier_hidden2 = 100
+        
         hyper_params.classifier_dropout = 0.1
         hyper_params.classifier_L2 = 1e-08
         hyper_params.batchNorm = False
@@ -173,8 +183,9 @@ if __name__ == '__main__':
                                         shuffle=True,
                                         num_workers=5
                                         )
+
             hyper_params.label_representation_hidden1 = 200
             train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
                             mapping_test_Y_new, test_Y_new, train_DSLL_loader)
-        break
+        # break
 
