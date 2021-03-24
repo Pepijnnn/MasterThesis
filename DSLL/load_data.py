@@ -5,6 +5,7 @@
 
 from helpers import split_label
 import arff
+import scipy.io
 import numpy as np
 
 def load_dataset(dataset, split):
@@ -24,7 +25,7 @@ def load_dataset(dataset, split):
         test_Y_full = test_data[:, 103:]
         test_Y, test_Y_rest = split_label(test_Y_full, split)
 
-    if dataset == "nus":
+    elif dataset == "nus":
         data_dir = 'datasets/'
         # uncomment if you need to make the npy file
         # train_data = arff.load(open(data_dir + 'nus-wide-full_BoW_l2-train.arff', 'rt'))
@@ -51,6 +52,18 @@ def load_dataset(dataset, split):
         test_Y_full = test_data[:, -81:]
         test_Y, test_Y_rest = split_label(test_Y_full, split)
         # exit()
+    elif dataset == "mirfl":
+        mat = scipy.io.loadmat('datasets/mirflickr.mat')
+
+        train_X = mat['X1'].astype(np.float)
+        train_Y_full = mat['X2'].astype(np.float)
+    
+        test_X = mat['XV1'].astype(np.float)
+        test_Y_full = mat['XV2'].astype(np.float)
+
+        train_Y, train_Y_rest = split_label(train_Y_full, split)
+        test_Y, test_Y_rest = split_label(test_Y_full, split)
+
         
 
     return train_X, train_Y, train_Y_rest, test_X, test_Y, test_Y_rest

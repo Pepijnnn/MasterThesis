@@ -400,12 +400,12 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
 
     if torch.cuda.is_available():
         classifier = classifier.cuda()
-    # optimizer = optim.Adam(classifier.parameters(), weight_decay=hyper_params.classifier_L2)
+    # optimizer = optim.SGD(classifier.parameters(), lr=1e-2, momentum=0.9)
     optimizer = torch.optim.Adam([
         {'params':classifier.W_m.parameters()},   # , 'lr': 0.0001},
         {'params':classifier.seniorStudent.parameters()},
         {'params':classifier.transformation.parameters()},
-    ], weight_decay=hyper_params.classifier_L2)
+    ], weight_decay=hyper_params.classifier_L2, lr = 0.0001)
 
     if hyper_params.loss == 'entropy':
         criterion = nn.MultiLabelSoftMarginLoss()
@@ -445,7 +445,7 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
             {'params':classifier_lpm.Fc2.parameters()},
             {'params':classifier_lpm.Fc3.parameters()},
             {'params':classifier_lpm.fc_concat.parameters()},
-        ], weight_decay=hyper_params.classifier_L2, lr=0.0001)
+        ], weight_decay=hyper_params.classifier_L2, lr=0.001)
 
      
     if torch.cuda.is_available():
@@ -580,8 +580,8 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
         training_loss = np.mean(batch_losses)
         training_losses.append(training_loss)
 
-        measurements2 = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
-                           mapping_test_Y_new, test_Y_new)
+        # measurements2 = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
+        #                    mapping_test_Y_new, test_Y_new)
         if measurements != None:
             print(measurements)
             full_measurements.append(measurements)
@@ -593,6 +593,7 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     F1_Macro = np.hstack(np.array(full_measurements)[:,1])
     AUC_micro = np.hstack(np.array(full_measurements)[:,2])
     AUC_macro = np.hstack(np.array(full_measurements)[:,3])
+    # print(f"{F1_Micro}\n{F1_Macro}\n{AUC_micro}\n{AUC_macro}")
     x_axis = [i for i in range(len(F1_Micro))]
     import matplotlib.pyplot as plt
     plt.plot(x_axis, F1_Micro, label='F1_Micro')
@@ -601,7 +602,7 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     plt.plot(x_axis, AUC_macro, label='AUC_macro')
     plt.xlabel('Instances', fontsize=18)
     plt.ylabel('Values', fontsize=16)
-    plt.ylim(0, 1)
+    # plt.ylim(0, 1)
     # from scipy.stats import linregress
 
     # slope, intercept, r_value, p_value, std_err = linregress(x_axis, F1_Micro)

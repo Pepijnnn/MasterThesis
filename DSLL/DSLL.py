@@ -37,7 +37,9 @@ if __name__ == '__main__':
     torch.backends.cudnn.enabled=False
     torch.backends.cudnn.deterministic=True
 
-    dataset = "nus"
+    datasets = ['yeast', 'nus', 'mirfl']
+    dataset = datasets[2]
+
     
     # lower split is less old labels used, higher split is more old labels used
     split=0.5
@@ -115,7 +117,7 @@ if __name__ == '__main__':
     relu_hook_test.remove()
     relu_out_test = relu_hook_test.features
 
-    hyper_params.KD_epoch = 1
+    hyper_params.KD_epoch = 5
 
     # knowledge destillation from teacher to new model
     featureKD_model = train_KD(hyper_params, train_X, relu_out_train, test_X, relu_out_test)
@@ -133,16 +135,15 @@ if __name__ == '__main__':
     rest_iterations = train_Y_rest.shape[1]
     if dataset == "nus":
         start_iterations = rest_iterations-5
+    if dataset == "mirfl":
+        start_iterations = rest_iterations-5
     else:
-        start_iterations = 1
+        start_iterations = 4
     for i in range(start_iterations, rest_iterations):
         print(f"New Labels number {i} from {rest_iterations}")
         # these are the to be labelled 
         train_Y_new = train_Y_rest[:, :i+1]
         test_Y_new = test_Y_rest[:, :i+1]
-        # print(train_Y_new.shape)
-        # print(test_Y_new.shape)
-        # exit()
         
         # define shapes
         hyper_params.M_new = train_Y_new.shape[1]
@@ -159,16 +160,13 @@ if __name__ == '__main__':
         mapping_train_Y_new = predict(mapping_model, 0.1 * soft_train_Y + 0.9 * train_Y)
         mapping_model.eval()
         mapping_test_Y_new = predict(mapping_model,  soft_test_Y)
-        # print(soft_test_Y.shape)
-        # print(mapping_test_Y_new.shape)
-        # exit()
 
         # Senior Student
         mapping_train_Y_new_tensor = torch.from_numpy(mapping_train_Y_new).float()
         train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
         train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
         
-        hyper_params.classifier_dropout = 0.1
+        hyper_params.classifier_dropout = 0.5
         hyper_params.classifier_L2 = 1e-08
         hyper_params.batchNorm = False
         hyper_params.changeloss = False
