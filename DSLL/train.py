@@ -380,7 +380,10 @@ def make_eval_DSLL(model, loss_fn, optimizer):
     return eval_step_DSLL
 
 ################################################################## DSLL ###################################################################
-def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader):
+def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader, use_al):
+    
+    # if use_al is True then there is no train loader, then it is a combination of the seed and pool which each consist out of three items
+
     hyper_params.classifier_input_dim = train_X.shape[1]
     hyper_params.classifier_output_dim = train_Y.shape[1]
     device = hyper_params.device
@@ -400,12 +403,12 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
 
     if torch.cuda.is_available():
         classifier = classifier.cuda()
-    # optimizer = optim.SGD(classifier.parameters(), lr=1e-2, momentum=0.9)
+    # optimizer = optim.RMSprop(classifier.parameters())
     optimizer = torch.optim.Adam([
         {'params':classifier.W_m.parameters()},   # , 'lr': 0.0001},
         {'params':classifier.seniorStudent.parameters()},
         {'params':classifier.transformation.parameters()},
-    ], weight_decay=hyper_params.classifier_L2, lr = 0.0001)
+    ], weight_decay=hyper_params.classifier_L2, lr = 0.001)
 
     if hyper_params.loss == 'entropy':
         criterion = nn.MultiLabelSoftMarginLoss()
@@ -425,17 +428,9 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
     # train_step = make_train_DSLL(classifier, criterion, optimizer)
     eval_step = make_eval_DSLL(classifier, criterion, optimizer)
 
-    # lp_criterion = approxNDCGLoss()
-    # lp_criterion = LambdaLoss()
-    # lp_criterion = ListNetLoss()
-    # lp_criterion = ListMLELoss()
-
-    # lp_criterion = RMSELoss()
+    # lp_criterions = {"ndcg": approxNDCGLoss(), "lambda":LambdaLoss(), "listnet": ListNetLoss(), "listMLE": ListMLELoss(), \
+    #                               "RMSE":RMSELoss(), "rank":RankLoss(),"mapranking":MapRankingLoss(),"spearman":SpearmanLoss()}
     lp_criterion = MarginRankingLoss_learning_loss()
-
-    # lp_criterion = RankLoss()
-    # lp_criterion = MapRankingLoss()
-    # lp_criterion = SpearmanLoss()
     
     
     classifier_lpm = LossPredictionMod(hyper_params)
@@ -515,17 +510,19 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
             if epoch <= 1:
                 optimizer.zero_grad()
                 optimizer2.zero_grad()
+                try:
+                    # Makes predictions detach old loss function (only update over loss prediction module)
+                    kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
+                    predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
 
-                # Makes predictions detach old loss function (only update over loss prediction module)
-                kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
-                predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
+                    loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
+                    loss3 = loss.mean().detach() + loss2
 
-                loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
-                loss3 = loss.mean().detach() + loss2
-
-                # Computes gradients and updates model
-                loss3.backward()
-                optimizer2.step()
+                    # Computes gradients and updates model
+                    loss3.backward()
+                    optimizer2.step()
+                except:
+                    print("WEIRD ERROR")
                 optimizer2.zero_grad()
                 # if len(batch_losses) % 1 == 0:
                     # print(predicted_loss,loss.unsqueeze(1))
@@ -615,6 +612,284 @@ def train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_tr
 
     print('complete the training')
     return classifier
+
+################################################################## AL DSLL ##################################################################
+def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader, use_al):
+    
+    # if use_al is True then there is no train loader, then it is a combination of the seed and pool which each consist out of three items
+
+    hyper_params.classifier_input_dim = train_X.shape[1]
+    hyper_params.classifier_output_dim = train_Y.shape[1]
+    device = hyper_params.device
+    hyper_params.model_name = 'DSLL'
+
+    # create new classifier
+    classifier = IntegratedDSLL(hyper_params) 
+
+    # copy weight information from KnowledgeDistillation 1st layer to IntegratedDSLL first layer
+    classifier_W_m = featureKD_model
+    classifier_W_m_dict = classifier_W_m.state_dict()
+    classifier_dict = classifier.state_dict()
+    classifier_W_m_dict = {k: v for k, v in classifier_W_m_dict.items() if k in classifier_dict}
+    classifier_dict.update(classifier_W_m_dict)
+
+    classifier.load_state_dict(classifier_dict, strict=False)
+
+    if torch.cuda.is_available():
+        classifier = classifier.cuda()
+
+    optimizer = torch.optim.Adam([
+        {'params':classifier.W_m.parameters()},   # , 'lr': 0.0001},
+        {'params':classifier.seniorStudent.parameters()},
+        {'params':classifier.transformation.parameters()},
+    ], weight_decay=hyper_params.classifier_L2, lr = 0.001)
+
+    # main loss function
+    criterion = AsymmetricLoss(reduce=False)
+
+    # train_step = make_train_DSLL(classifier, criterion, optimizer)
+    eval_step = make_eval_DSLL(classifier, criterion, optimizer)
+
+    lp_criterion = MarginRankingLoss_learning_loss()
+    
+    
+    classifier_lpm = LossPredictionMod(hyper_params)
+    # optimizer2 = optim.Adam(classifier_lpm.parameters(), weight_decay=hyper_params.classifier_L2)
+    optimizer2 = torch.optim.Adam([
+            {'params':classifier_lpm.Fc1.parameters()},   # , 'lr': 0.0001},
+            {'params':classifier_lpm.Fc2.parameters()},
+            {'params':classifier_lpm.Fc3.parameters()},
+            {'params':classifier_lpm.fc_concat.parameters()},
+        ], weight_decay=hyper_params.classifier_L2, lr=0.001)
+
+     
+    if torch.cuda.is_available():
+        classifier_lpm = classifier_lpm.cuda()
+
+    from collections import defaultdict
+    training_losses, full_losses, full_measurements = [], [], defaultdict(list)
+
+    # base of active learning train with the seed then add from pool the best examples and train more
+    xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool = train_loader
+    batch_size = len(xseed)
+    
+    svm_al_learner = ActiveSVMLearner()
+    forest_al_learner = ActiveForestLearner()
+    # for now altype can be random, forest, svm, or lpm
+    altypes = ['random', 'rf', 'svm', 'lpm'][3:]
+    for tp in altypes:
+        altype = tp
+
+        # how big is the active learning budget
+        budget = 20
+        # for each epoch
+        x_axis, ndcg_saved = [], []
+        # just set it at 2 for now dont think too much
+        hyper_params.classifier_epoch = 1
+        for epoch in range(hyper_params.classifier_epoch):
+            batch_losses = []
+            hyper_params.currentEpoch = epoch
+            
+            # for x_batch, y_mapping, y_batch in train_loader:
+            for _ in range(budget):
+                # just take the last batch_size items to train, these are selected out of the pool to train on
+                x_batch, y_mapping, y_batch = xseed[-batch_size:], y_mappingseed[-batch_size:], yseed[-batch_size:]
+                x_batch = x_batch.to(device)
+                y_mapping = y_mapping.to(device)
+                y_batch = y_batch.to(device)
+                batch_size = x_batch.shape[0]
+                
+                # train with the seed and later the pool
+                classifier.train()
+                optimizer.zero_grad()
+                optimizer2.zero_grad()
+                yhat, kd_mid, trans_mid, ss_mid = classifier(x_batch,y_mapping)
+                loss = criterion(yhat, y_batch)
+                loss.mean().backward()
+                optimizer.step()           
+
+                batch_losses.append(loss.mean().item()) #.mean()
+
+                # obtain measurements
+                if epoch <= 10 : # and len(batch_losses) % 1 == 0
+                    measurements = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
+                                mapping_test_Y_new, test_Y_new)
+                    if measurements != None:
+                        full_measurements[tp].append(measurements)
+
+                ############## ACTIVE LEARNING PART ##############
+                # Random selection 
+                if altype == "random":
+                    chosen_indices = active_random(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                elif altype == "svm":
+                    chosen_indices = svm_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                elif altype == "rf":
+                    chosen_indices = forest_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                elif altype == "lpm":
+                    # Loss learning module
+
+                    # train the loss prediction module with the seed
+                    if epoch <= 1:
+                        optimizer.zero_grad()
+                        optimizer2.zero_grad()
+                        try:
+                            # Makes predictions detach old loss function (only update over loss prediction module)
+                            kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
+                            predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
+
+                            loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
+                            loss3 = loss.mean().detach() + loss2
+
+                            # Computes gradients and updates model
+                            loss3.backward()
+                            optimizer2.step()
+                        except:
+                            print("WEIRD ERROR")
+                        optimizer2.zero_grad()
+
+                    # predict best items to select in the pool
+                    classifier.eval()
+                    # get the model output of the xpools (no training)
+                    _, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device),y_mappingpool.to(device))
+                    kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
+                    predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
+                    # # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
+                    # true_ranking = np.asarray(yhat_test.unsqueeze(1).cpu().detach().numpy())
+                    predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+                    # TODO sort the losses and get the indices of xpool of the highest values
+                    sorted_predicted_losses_array = sorted(predicted_losses_array, reverse=True)
+                    print(sorted_predicted_losses_array[:10])
+                    exit()
+                    # ndcg_index = np.asarray([ndcg_seq.index(v) for v in ndcg_true])[..., np.newaxis]
+
+                    # # compare rank with score higher score is higher confidence so needs to match true loss rank
+                    # ndcg_score =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+
+                # add selected items to the seed
+                xseed = torch.cat((xseed,xpool[chosen_indices]),0)
+                y_mappingseed = torch.cat((y_mappingseed,y_mappingpool[chosen_indices]),0)
+                yseed = torch.cat((yseed,ypool[chosen_indices]),0)
+
+                # calculate which items need to go from the pool
+                all_indices = np.arange(0, len(xpool))
+                non_chosen_items = list(set(all_indices) - set(chosen_indices))
+
+                # remove the seeds from the pool
+                xpool = xpool[non_chosen_items]
+                y_mappingpool = y_mappingpool[non_chosen_items]
+                ypool = ypool[non_chosen_items]
+                    
+                    
+            full_losses.append(batch_losses)
+            training_loss = np.mean(batch_losses)
+            training_losses.append(training_loss)
+
+            # if measurements != None:
+            #     print(measurements)
+            #     full_measurements[tp].append(measurements)
+    
+    # plot active learning results
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    plt.figure(figsize=(12, 7))
+    sns.set_style("darkgrid")
+    # define colours by hand (because easier to know what is happening)
+    colours = [["008000", "00A000", "00C000", "00E000"], ["800000", "A00000", "C00000", "E00000"], ["000080", "0000A0", "0000C0", "0000E0"]]
+    # loop over the al methods and calculate the measures
+    for e, i in enumerate(altypes):
+        F1_Micro = np.hstack(np.array(full_measurements[i])[:,0])
+        F1_Macro = np.hstack(np.array(full_measurements[i])[:,1])
+        AUC_micro = np.hstack(np.array(full_measurements[i])[:,2])
+        AUC_macro = np.hstack(np.array(full_measurements[i])[:,3])
+        
+        # define x-axis as arange of the length of the array
+        x_axis = [i for i in range(len(F1_Micro))]
+        
+        # plot the lines
+        # plt.plot(x_axis, F1_Micro, label=f'F1_Micro_{i}',color  = f'#{colours[e][0]}')
+        plt.plot(x_axis, F1_Macro, label=f'F1_Macro_{i}',color  = f'#{colours[e][1]}')
+        # plt.plot(x_axis, AUC_micro, label=f'AUC_micro_{i}',color= f'#{colours[e][2]}')
+        plt.plot(x_axis, AUC_macro, label=f'AUC_macro_{i}',color= f'#{colours[e][3]}')
+
+
+    plt.xlabel('Instances', fontsize=18)
+    plt.ylabel('Values', fontsize=16)
+
+    # from scipy.stats import linregress
+    plt.title("Active learning with DSLL")
+    plt.legend(bbox_to_anchor=(1,1), loc="upper left")
+    plt.show()
+    # exit()
+
+    print('complete the training')
+    return classifier
+
+# just randomly select indices without further information
+def active_random(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size):
+    random_seed_list = np.random.randint(0, len(xpool), batch_size)
+    return random_seed_list
+
+from modAL.models import ActiveLearner
+from modAL.multilabel import avg_score, max_score, min_confidence, avg_confidence
+from modAL.uncertainty import uncertainty_sampling
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.tree import DecisionTreeClassifier
+
+# select indices from xpool which have some meaning for the svm
+class ActiveSVMLearner:
+    def __init__(self):
+        # probably the xseed and yseed are in tensors and they need to be in numpy 
+        # initializing the active learner
+        self.learner = ActiveLearner(
+            estimator=OneVsRestClassifier(SVC(probability=True, gamma='auto')),
+            query_strategy=uncertainty_sampling
+            # X_training=xseed.numpy(), y_training=yseed.numpy()
+        )
+    def forward(self, xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size):
+        # only take teach the F items
+        self.learner.teach(xseed.numpy()[-batch_size:], yseed.numpy()[-batch_size:])
+        query_idx, query_instance = self.learner.query(xpool.numpy(),  n_instances=batch_size)
+        return query_idx
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import WhiteKernel, RBF
+def RF_regression_sum(regressor, X):
+    # predict rf
+    std = regressor.predict(X)
+    # sum label prediction
+    std = np.sum(std, axis=1)
+    # take top 10 predictions for active learning
+    query_idx = np.argpartition(std,-10)[-10:]
+    return query_idx, X[query_idx]
+# run like  100 times curves mostly for random
+# pretrsain on known labels
+# worse than random heuristic to see what happens
+# classifier chain or something as other model next to DSLL
+# writing training procedures in pseudocode, with yeast and real world 
+# dataset
+# select indices from xpool which have some meaning for the random forest
+class ActiveForestLearner:
+    def __init__(self):
+        # probably the xseed and yseed are in tensors and they need to be in numpy 
+        # initializing the active learner
+        self.learner = ActiveLearner(
+            estimator=RandomForestRegressor(),
+            query_strategy=RF_regression_sum,
+        )
+
+    def forward(self, xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size):
+        # print(xseed[-batch_size:].shape, yseed[-batch_size:].shape)
+        # only take teach the new items
+        self.learner.teach(xseed.numpy()[-batch_size:], yseed.numpy()[-batch_size:])
+        
+        query_idx, query_instance = self.learner.query(xpool.numpy()) #
+        
+        return query_idx
+
+
 
 class AsymmetricLoss(nn.Module):
     def __init__(self, reduce=True, gamma_neg=4, gamma_pos=1, clip=0.05, eps=1e-8, disable_torch_grad_focal_loss=False):

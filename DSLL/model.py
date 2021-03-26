@@ -159,12 +159,14 @@ class MarginRankingLoss_learning_loss(nn.Module):
     def forward(self, inputs, targets):
         random = torch.randperm(inputs.size(0))
         pred_loss = inputs[random]
-        pred_lossi = inputs[:inputs.size(0)//2]
-        pred_lossj = inputs[inputs.size(0)//2:]
+        fr = int(inputs.size(0)//2)
+        to = int(inputs.size(0)//2)
+        pred_lossi = inputs[:fr]
+        pred_lossj = inputs[to:]
         target_loss = targets.reshape(inputs.size(0), 1)
         target_loss = target_loss[random]
-        target_lossi = target_loss[:inputs.size(0)//2]
-        target_lossj = target_loss[inputs.size(0)//2:]
+        target_lossi = target_loss[:fr]
+        target_lossj = target_loss[to:]
         final_target = torch.sign(target_lossi - target_lossj)
         
         return F.margin_ranking_loss(pred_lossi, pred_lossj, final_target, margin=self.margin, reduction='mean')

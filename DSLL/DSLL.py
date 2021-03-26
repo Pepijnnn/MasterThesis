@@ -4,7 +4,7 @@
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 import torch
-from train import   train_KD, train_DSLL_model, train_new, train_S_label_mapping
+from train import   train_KD, train_DSLL_model, train_new, train_S_label_mapping, AL_train_DSLL_model
 from helpers import predict, print_predict, LayerActivations
 from params_setting import get_params
 from load_data import load_dataset
@@ -20,12 +20,41 @@ class CustomDataset(Dataset):
         self.x = x_tensor
         self.y_mapping = y_mapping_tensor
         self.y = y_tensor
+        
 
     def __getitem__(self, index):
         return (self.x[index], self.y_mapping[index], self.y[index])
 
     def __len__(self):
         return len(self.x)
+
+# class CustomActiveLearningDataset(Dataset):
+def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, y_tensor, seeds = 10):
+    # randomly select the seeds
+    all_indices = np.arange(0, len(x_tensor))
+    random_seed_list = np.random.randint(0, len(x_tensor), seeds)
+
+    # trick to remove items from random seed list in all indices
+    difference = list(set(all_indices) - set(random_seed_list))
+
+    # select the seeds in the tensors
+    xseed = x_tensor[random_seed_list]
+    y_mappingseed = y_mapping_tensor[random_seed_list]
+    yseed = y_tensor[random_seed_list]
+
+    # remove the seeds from the pool
+    xpool = x_tensor
+    y_mappingpool = y_mapping_tensor
+    ypool = y_tensor
+
+    # pool contains all x_tensor except for the ones in the seed
+    xpool = xpool[difference]
+    y_mappingpool = y_mappingpool[difference]
+    ypool = ypool[difference]
+
+    # return seeds and pool
+    return (xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool)
+
 
 if __name__ == '__main__':
     seednr = 120 #123
@@ -37,15 +66,21 @@ if __name__ == '__main__':
     torch.backends.cudnn.enabled=False
     torch.backends.cudnn.deterministic=True
 
+    ############################################# IMPORTANT VALUES FOR DATASETS AND ACTIVE LEARNING #############################################
     datasets = ['yeast', 'nus', 'mirfl']
-    dataset = datasets[2]
-
+    dataset = datasets[0]
+    use_al = True
+    ############################################# IMPORTANT VALUES FOR DATASETS AND ACTIVE LEARNING #############################################
     
     # lower split is less old labels used, higher split is more old labels used
     split=0.5
 
-    # test_Y are old y labels, test_Y_rest are new label indices. 
+    # train_Y/test_Y are old y labels, test_Y_rest are new label indices. 
     train_X, train_Y, train_Y_rest, test_X, test_Y, test_Y_rest = load_dataset(dataset, split)
+    # print(train_X.shape)
+    # print(train_Y.shape)
+    # print(test_X.shape)
+    # exit()
     hyper_params = get_params(dataset)
 
     train_X_tensor = torch.from_numpy(train_X).float()
@@ -117,7 +152,7 @@ if __name__ == '__main__':
     relu_hook_test.remove()
     relu_out_test = relu_hook_test.features
 
-    hyper_params.KD_epoch = 5
+    hyper_params.KD_epoch = 1
 
     # knowledge destillation from teacher to new model
     featureKD_model = train_KD(hyper_params, train_X, relu_out_train, test_X, relu_out_test)
@@ -151,12 +186,14 @@ if __name__ == '__main__':
         hyper_params.label_representation_output_dim = train_Y_new.shape[1]
         print('apply label mapping')
         # Train_Y is available, soft train Y is predicted by the old classifier at start. Soft test Y is predicted by old class
-        mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new) # soft_test_Y
         # model_old = torch.load('models/{}mapping'.format(i+2))
-        # torch.save(mapping_model, f'models/{i+1}mapping-pep-{split}-upd')  
         # pepijn model:
-        # mapping_model = torch.load(
-        #     f'models/{i+1}mapping-pep-{split}-upd')
+        if dataset == "yeast":
+            mapping_model = torch.load(
+                f'models/{i+1}mapping-pep-{split}-upd')
+        else:
+            mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new) # soft_test_Y
+            # torch.save(mapping_model, f'models/{i+1}mapping-pep-{split}-upd')  
         mapping_train_Y_new = predict(mapping_model, 0.1 * soft_train_Y + 0.9 * train_Y)
         mapping_model.eval()
         mapping_test_Y_new = predict(mapping_model,  soft_test_Y)
@@ -164,7 +201,10 @@ if __name__ == '__main__':
         # Senior Student
         mapping_train_Y_new_tensor = torch.from_numpy(mapping_train_Y_new).float()
         train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
-        train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
+        if use_al == True:
+            seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor, 10)
+        else:
+            train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
         
         hyper_params.classifier_dropout = 0.5
         hyper_params.classifier_L2 = 1e-08
@@ -175,15 +215,20 @@ if __name__ == '__main__':
         # 5, 10, 15, 20
         for batch_size in [10]:
             hyper_params.batch_size = batch_size
-            # hyper_params.classifier_epoch = int(40 + 1 * hyper_params.batch_size)
-            train_DSLL_loader = DataLoader(dataset=train_data_DSLL,
-                                        batch_size=hyper_params.batch_size,
-                                        shuffle=True,
-                                        num_workers=5
-                                        )
 
-            hyper_params.label_representation_hidden1 = 200
-            train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
-                            mapping_test_Y_new, test_Y_new, train_DSLL_loader)
-        # break
+            if use_al == True:
+                AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
+                                mapping_test_Y_new, test_Y_new, seed_pool, use_al)
+            else:    
+                # hyper_params.classifier_epoch = int(40 + 1 * hyper_params.batch_size)
+                train_DSLL_loader = DataLoader(dataset=train_data_DSLL,
+                                            batch_size=hyper_params.batch_size,
+                                            shuffle=True,
+                                            num_workers=5
+                                            )
+
+                hyper_params.label_representation_hidden1 = 200
+                train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
+                                mapping_test_Y_new, test_Y_new, train_DSLL_loader, use_al)
+        break
 
