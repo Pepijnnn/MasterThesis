@@ -43,6 +43,7 @@ class IntegratedDSLL(nn.Module):
         y_new_prediction = self.seniorStudent(torch.cat((x_feature_kd, y_transformation), 1))
         return y_new_prediction, x_feature_kd, y_transformation, y_new_prediction
 
+# copy weights from loss prediction model when trained on old inputs
 class LossPredictionMod(nn.Module):
     def __init__(self, hyper_params):
         super(LossPredictionMod, self).__init__()
@@ -77,6 +78,18 @@ class LossPredictionMod(nn.Module):
         # predicted_loss = self.fc_concat(torch.cat((W_m_output,ss_output),1))
         # predicted_loss = self.fc_concat(ss_output)
         return predicted_loss
+
+class BinaryRelevance():
+    def __init__(self):
+        pass
+    def forward(self):
+        pass
+
+class ClassifierChain():
+    def __init__(self):
+        pass
+    def forward(self):
+        pass
 
 
 import math

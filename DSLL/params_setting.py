@@ -52,7 +52,7 @@ def get_params(dataset_name):
     hyper_params.KD_dropout = 0.1
 
     hyper_params.classifier_epoch = 10 #10
-    hyper_params.label_mapping_epoch = 20 #20
+    hyper_params.label_mapping_epoch = 1 #20
     hyper_params.label_representation_epoch = 50
     return hyper_params
 

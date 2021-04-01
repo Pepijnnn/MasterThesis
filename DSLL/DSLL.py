@@ -57,7 +57,7 @@ def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, y_tensor, seeds = 10)
 
 
 if __name__ == '__main__':
-    seednr = 120 #123
+    seednr = 124 #123
     random.seed(seednr)
     torch.manual_seed(seednr)
     torch.cuda.manual_seed(seednr)
@@ -201,6 +201,8 @@ if __name__ == '__main__':
         # Senior Student
         mapping_train_Y_new_tensor = torch.from_numpy(mapping_train_Y_new).float()
         train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
+        # if we use active leanring we cant use a loader so the whole data needs to be loaded in memory!!!!
+        # possible fix is to use random set each time in loader which changes
         if use_al == True:
             seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor, 10)
         else:
@@ -216,9 +218,10 @@ if __name__ == '__main__':
         for batch_size in [10]:
             hyper_params.batch_size = batch_size
 
+            # if true then go into the AL mode
             if use_al == True:
                 AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
-                                mapping_test_Y_new, test_Y_new, seed_pool, use_al)
+                                mapping_test_Y_new, test_Y_new, seed_pool, use_al, seednr)
             else:    
                 # hyper_params.classifier_epoch = int(40 + 1 * hyper_params.batch_size)
                 train_DSLL_loader = DataLoader(dataset=train_data_DSLL,
