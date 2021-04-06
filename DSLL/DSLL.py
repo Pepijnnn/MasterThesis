@@ -57,7 +57,7 @@ def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, y_tensor, seeds = 10)
 
 
 if __name__ == '__main__':
-    seednr = 124 #123
+    seednr = 126 #123
     random.seed(seednr)
     torch.manual_seed(seednr)
     torch.cuda.manual_seed(seednr)
@@ -204,7 +204,8 @@ if __name__ == '__main__':
         # if we use active leanring we cant use a loader so the whole data needs to be loaded in memory!!!!
         # possible fix is to use random set each time in loader which changes
         if use_al == True:
-            seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor, 10)
+            batch_size = 10
+            seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor, batch_size)
         else:
             train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
         

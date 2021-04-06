@@ -13,6 +13,7 @@ from helpers import predictor_accuracy, precision_at_ks, predict, predict_integr
     print_predict, LayerActivations, modify_state_dict
 
 import numpy as np
+import pandas as pd
 
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -645,19 +646,20 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     batch_size = len(xseed_save)
 
     # how many times (with different seed) do you want to run the random active learner (for smooth graph) leave at 5
-    random_amount = 5
+    # random_amount = 5
     
     # svm and rf callable classes for the forward passes
     svm_al_learner = ActiveSVMLearner()
     forest_al_learner = ActiveForestLearner()
+    worstcasesvm_al_learner = ActiveForestLearnerWorstCase()
 
     # which of the loss prediction module selection procedures you want to use
     # choose{original, kmeans, distance}
-    lpm_selection = "kmeans"
+    lpm_selection = "kmeans" #"kmeans"
     
-
     # for now altype can be worstcase, random, forest, svm, or lpm
-    altypes = ['worstcase', 'lpm',  'rf', 'svm','random'][1:]
+    # set the range for which active learning methods you want to see
+    altypes = ['worstcase', 'svm', 'random',  'rf',  'lpm', 'lpm_pointwise', 'lpm_rankwise'][4:5]
     for altype in altypes:
         # create new classifier
         classifier = IntegratedDSLL(hyper_params) 
@@ -697,23 +699,65 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                 {'params':classifier_lpm.Fc3.parameters()},
                 {'params':classifier_lpm.fc_concat.parameters()},
             ], weight_decay=hyper_params.classifier_L2, lr=0.001)
+        
+        classifier_lpm_old = LossPredictionMod(hyper_params)
+        # optimizer2 = optim.Adam(classifier_lpm.parameters(), weight_decay=hyper_params.classifier_L2)
+        optimizer3 = torch.optim.Adam([
+                {'params':classifier_lpm_old.Fc1.parameters()},   # , 'lr': 0.0001},
+                {'params':classifier_lpm_old.Fc2.parameters()},
+                {'params':classifier_lpm_old.Fc3.parameters()},
+                {'params':classifier_lpm_old.fc_concat.parameters()},
+            ], weight_decay=hyper_params.classifier_L2, lr=0.001)
 
         
         if torch.cuda.is_available():
             classifier_lpm = classifier_lpm.cuda()
+            classifier_lpm_old = classifier_lpm_old.cuda()
 
         # reload the original (saved) values
         xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool = xseed_save, y_mappingseed_save, yseed_save, xpool_save, y_mappingpool_save, ypool_save
+        
+        # what is the max budget possible
+        max_budget = int(len(xpool)/batch_size)
         # how big is the active learning budget
-        budget = 80
+        # make the budget the same or half as the max
+        budget = int(max_budget//2) #int(max_budget/2)
         # for each epoch
         x_axis, ndcg_saved = [], []
 
-        # do many random tests for smoother line
-        if altype == 'random':
-            full_measurements[altype] = do_many_randoms(budget, classifier, optimizer, optimizer2, criterion, device, xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, hyper_params, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
-                                mapping_test_Y_new, test_Y_new, batch_size, random_amount)
+        # do many tests for a smoother line TODO V0.3 make work for other active learners
+        # if altype == 'random':
+        random_amount = 3 if altype == "random" else 2
+        if altype == "random":
+            full_measurements[altype] = do_many_active(altype, budget, device, xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, hyper_params, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
+                                mapping_test_Y_new, test_Y_new, batch_size, random_amount, featureKD_model)
             continue
+
+        # kmeans initialized with the original xpool, the df2 contains its labels and value get deleted when chosen for seed
+        if lpm_selection == "kmeans":
+            # we can incease/decrease the batch_size multiplier between 2-4
+            # best results: multiplier:3, ncomponents:4
+            batch_size_multiplier = 3
+            kmeans = KMeans(
+                init="random",
+                n_clusters=batch_size*batch_size_multiplier,
+                n_init=10,
+                max_iter=300,
+                random_state=42
+            )
+            # try with and without standard scaler
+            # try with dimensionality reduction?
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=4)
+            scaler = StandardScaler()
+            scaled_features = scaler.fit_transform(xpool)
+            principalComponents = pca.fit_transform(scaled_features)
+            
+            # kmeans.fit(scaled_features)
+            kmeans.fit(principalComponents)
+            df2 = pd.DataFrame(kmeans.labels_, columns = ['cluster'])
+
+
         set_random_seed(seednr)
 
 
@@ -724,7 +768,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
             hyper_params.currentEpoch = epoch
             
             # for x_batch, y_mapping, y_batch in train_loader:
-            for _ in range(budget):
+            for bud in range(budget):
                 # just take the last batch_size items to train, these are selected out of the pool to train on
                 x_batch, y_mapping, y_batch = xseed[-batch_size:], y_mappingseed[-batch_size:], yseed[-batch_size:]
                 x_batch = x_batch.to(device)
@@ -755,7 +799,8 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                 if altype == "random":
                     chosen_indices = active_random(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
                 elif altype == "worstcase":
-                    chosen_indices = active_worstcase(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                    # chosen_indices = active_worstcase(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                    chosen_indices = worstcasesvm_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
                 elif altype == "svm":
                     chosen_indices = svm_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
                 elif altype == "rf":
@@ -767,6 +812,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                     if epoch <= 1:
                         optimizer.zero_grad()
                         optimizer2.zero_grad()
+                        optimizer3.zero_grad()
                         try:
                             # Makes predictions detach old loss function (only update over loss prediction module)
                             kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
@@ -781,6 +827,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         except:
                             print("WEIRD ERROR")
                         optimizer2.zero_grad()
+                        optimizer3.zero_grad()
 
                     # predict best items to select in the pool
                     classifier.eval()
@@ -794,46 +841,44 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
 
                     if lpm_selection == "original":
                         # the original loss prediction module
-                        # get the top 10 highest loss indices
+                        # get the top 10 highest loss indices, 10 is here batch_size
                         top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
                         # these are in a list of a list so unpack it
                         chosen_indices = [i[0] for i in top_10_loss_indices]
                     elif lpm_selection == "kmeans":
-                        kmeans = KMeans(
-                            init="random",
-                            n_clusters=batch_size*4,
-                            n_init=10,
-                            max_iter=300,
-                            random_state=42
-                        )
-                        scaler = StandardScaler()
-                        scaled_features = scaler.fit_transform(xpool)
-                        kmeans.fit(scaled_features)
-
-                        import pandas as pd
-                        # kmeans selection
-                        print(predicted_losses_array.shape[0])
-                        print(kmeans.labels_.shape[0])
-                        # make sure that kmeans will work
-                        assert predicted_losses_array.shape[0] == kmeans.labels_.shape[0]
-
+                        
                         # make a dataframe with two columns, the losses and cluster number of the items in the pool and sort them
                         # the index number is kept so we have the index of the highest loss items in the top
-                        df1, df2 = pd.DataFrame(predicted_losses_array, columns = ['losses']), pd.DataFrame(kmeans.labels_, columns = ['cluster'])
+                        # df1, df2 = pd.DataFrame(predicted_losses_array, columns = ['losses']), pd.DataFrame(kmeans.labels_, columns = ['cluster'])
+                        # df2 are the labels from the pool
+                        df1= pd.DataFrame(predicted_losses_array, columns = ['losses'])
                         df3 = pd.concat([df1, df2], axis=1)
-                        df4 = df3.sort_values('losses',
-                                     ascending=False)
+                        df4 = df3.sort_values('losses',ascending=False)
+
                         chosen_indices, chosen_clusters = [], []
                         # choose the items if the cluster is not already represented (chosen)
                         for i in df4.iterrows():
-                            # stop condition
-                            if len(chosen_indices) == 10:
+                            # stop condition if we have reached the batch size
+                            if len(chosen_indices) == batch_size:
                                 break
-                            # add to chosen indices if it is not chosen (inherently from high loss to low)
+                            # add to chosen indices if it is not in chosen_clusters (inherently from high loss to low)
                             if int(i[1][1]) not in chosen_clusters:
                                 chosen_clusters.append(int(i[1][1]))
                                 chosen_indices.append(int(i[0]))
+                                # make sure the index is the same in df2 and df4
+                                assert int(df4.loc[int(i[0])].cluster) == int(df2.loc[int(i[0])].cluster)
+                                # drop the chosen index from the pool
+                                df2.drop(int(i[0]))
+                        # top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
+                        # these are in a list of a list so unpack it
+                        # chosen_indices2 = [i[0] for i in top_10_loss_indices]
+                        # chosen_indices.sort()
+                        # chosen_indices2.sort()
+                        # print(chosen_indices)
+                        # print(chosen_indices2)
+                        # print(set(chosen_indices)- set(chosen_indices2))
 
+                        # choose different clusters just as now or closer to center clusters
                         # print(chosen_indices)
                         # print(chosen_clusters)
 
@@ -842,21 +887,61 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         # print(kmeans.cluster_centers_.shape)
                         # print(kmeans.cluster_centers_[5].shape)
                         # exit()
+                        # if bud >= int(budget//2):
+                        #     lpm_selection = "original"
+                        
                     elif lpm_selection == "distance":
                         pass
                     else:
                         print("no lpm selection measure given")
                         pass
+                # original thing
+                elif altype == "lpm_rankwise":
+                    # Loss learning module
 
+                    # train the loss prediction module with the seed
+                    if epoch <= 1:
+                        optimizer.zero_grad()
+                        optimizer2.zero_grad()
+                        optimizer3.zero_grad()
+                        # try:
+                        # Makes predictions detach old loss function (only update over loss prediction module)
+                        
+                        kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
+                        
+                        predicted_loss = classifier_lpm_old(kd_mid, trans_mid, ss_mid)
+                        
+                        loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
+                        loss3 = loss.mean().detach() + loss2
 
+                        # Computes gradients and updates model
+                        loss3.backward()
+                        optimizer3.step()
+                        # except:
+                        #     print("WEIRD ERROR")
+                        optimizer3.zero_grad()
 
+                    # predict best items to select in the pool
+                    classifier.eval()
+                    # get the model output of the xpools (no training)
+                    _, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device),y_mappingpool.to(device))
+                    kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
+                    predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
+
+                    # true_ranking = np.asarray(yhat_test.unsqueeze(1).cpu().detach().numpy())
+                    predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+
+                    # get the top 10 highest loss indices
+                    top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
+                    # these are in a list of a list so unpack it
+                    chosen_indices = [i[0] for i in top_10_loss_indices]
 
                 # add selected items to the seed
                 xseed = torch.cat((xseed,xpool[chosen_indices]),0)
                 y_mappingseed = torch.cat((y_mappingseed,y_mappingpool[chosen_indices]),0)
                 yseed = torch.cat((yseed,ypool[chosen_indices]),0)
 
-                # calculate which items need to go from the pool
+                # calculate which items need to be deleted from the pool (the ones that are chosen==new seed)
                 all_indices = np.arange(0, len(xpool))
                 non_chosen_items = list(set(all_indices) - set(chosen_indices))
 
@@ -870,9 +955,9 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
             training_loss = np.mean(batch_losses)
             training_losses.append(training_loss)
 
-            # if measurements != None:
-            #     print(measurements)
-            #     full_measurements[altype].append(measurements)
+            if measurements != None:
+                print(measurements)
+                full_measurements[altype].append(measurements)
     
     # plot active learning results
     import matplotlib.pyplot as plt
@@ -912,82 +997,228 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     return classifier
 
 
-def do_many_randoms(budget, classifier, optimizer, optimizer2, criterion, device, xseed_old, y_mappingseed_old, yseed_old, xpool_old, y_mappingpool_old, ypool_old, hyper_params, training_losses, train_X_old, mapping_train_Y_new_old, train_Y_new_old, test_X_old,
-                                mapping_test_Y_new_old, test_Y_new_old, batch_size, random_amount):
+def do_many_active(active_learner, budget, device, xseed_old, y_mappingseed_old, yseed_old, xpool_old, y_mappingpool_old, ypool_old, hyper_params, training_losses, train_X_old, mapping_train_Y_new_old, train_Y_new_old, test_X_old,
+                                mapping_test_Y_new_old, test_Y_new_old, batch_size, max_seednr, featureKD_model, epochs =1):
     full_measurements = defaultdict(list)
     batch_losses = []
+    # which selection procedure used
+    lpm_selection = "kmeans"
     # max_seednr = random_amount
-    for seednr in range(random_amount):
-        # load in the old values
-        xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool = xseed_old, y_mappingseed_old, yseed_old, xpool_old, y_mappingpool_old, ypool_old
-        train_X, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new = train_X_old, mapping_train_Y_new_old, train_Y_new_old, test_X_old, mapping_test_Y_new_old, test_Y_new_old
-        set_random_seed(seednr)
-         # for x_batch, y_mapping, y_batch in train_loader:
-        for e in range(budget):
-            # just take the last batch_size items to train, these are selected out of the pool to train on
-            x_batch, y_mapping, y_batch = xseed[-batch_size:], y_mappingseed[-batch_size:], yseed[-batch_size:]
-            x_batch = x_batch.to(device)
-            y_mapping = y_mapping.to(device)
-            y_batch = y_batch.to(device)
-            batch_size = x_batch.shape[0]
+    startseed = 10
+    for seednr in range(startseed, startseed+max_seednr):
+        worstcasesvm_al_learner = ActiveForestLearnerWorstCase()
+        for epoch in range(epochs):
+
+            set_random_seed(seednr)
+            # load in the old values
+            xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool = xseed_old, y_mappingseed_old, yseed_old, xpool_old, y_mappingpool_old, ypool_old
+            train_X, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new = train_X_old, mapping_train_Y_new_old, train_Y_new_old, test_X_old, mapping_test_Y_new_old, test_Y_new_old
+            # reinitialise the active learners with new seed
+            # svm_al_learner = ActiveSVMLearner()
+            # forest_al_learner = ActiveForestLearner()
+
+            # create new classifier
+            classifier = IntegratedDSLL(hyper_params) 
+
+            # copy weight information from KnowledgeDistillation 1st layer to IntegratedDSLL first layer
+            classifier_W_m = featureKD_model
+            classifier_W_m_dict = classifier_W_m.state_dict()
+            classifier_dict = classifier.state_dict()
+            classifier_W_m_dict = {k: v for k, v in classifier_W_m_dict.items() if k in classifier_dict}
+            classifier_dict.update(classifier_W_m_dict)
+
+            classifier.load_state_dict(classifier_dict, strict=False)
+
+            if torch.cuda.is_available():
+                classifier = classifier.cuda()
+
+            optimizer = torch.optim.Adam([
+                {'params':classifier.W_m.parameters()},   # , 'lr': 0.0001},
+                {'params':classifier.seniorStudent.parameters()},
+                {'params':classifier.transformation.parameters()},
+            ], weight_decay=hyper_params.classifier_L2, lr = 0.001)
+
+            # main loss function
+            criterion = AsymmetricLoss(reduce=False)
+
+            # train_step = make_train_DSLL(classifier, criterion, optimizer)
+            eval_step = make_eval_DSLL(classifier, criterion, optimizer)
+
+            lp_criterion = MarginRankingLoss_learning_loss()
             
-            # train with the seed and later the pool
-            classifier.train()
-            optimizer.zero_grad()
-            optimizer2.zero_grad()
-            yhat, _, _, _ = classifier(x_batch,y_mapping)
-            loss = criterion(yhat, y_batch)
-            loss.mean().backward()
-            optimizer.step()           
-
-            batch_losses.append(loss.mean().item()) #.mean()
-
-            # obtain measurements
-            # measuremetns is list of 4 items
-            measurements = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
-                                mapping_test_Y_new, test_Y_new)
             
-            # specialcase for first item, the first measurements list needs to be appended to the full lists
-            # the following items will just be added to this list. Numpy can actually add 2 lists so this is used
-            # for measurements we divide by the max number
-            if measurements != None and seednr == 0:
-                measurements = np.array(measurements)/100
-                full_measurements["random"].append(measurements.tolist())
-            # numpy can add lists python just makes bigger listts
-            elif measurements != None:
-                pythonlist = full_measurements["random"][e] 
-                numpylist = np.array(pythonlist) + np.array(measurements)/random_amount
-                full_measurements["random"][e] = numpylist.tolist()
+            classifier_lpm = LossPredictionMod(hyper_params)
+            # optimizer2 = optim.Adam(classifier_lpm.parameters(), weight_decay=hyper_params.classifier_L2)
+            optimizer2 = torch.optim.Adam([
+                    {'params':classifier_lpm.Fc1.parameters()},   # , 'lr': 0.0001},
+                    {'params':classifier_lpm.Fc2.parameters()},
+                    {'params':classifier_lpm.Fc3.parameters()},
+                    {'params':classifier_lpm.fc_concat.parameters()},
+                ], weight_decay=hyper_params.classifier_L2, lr=0.001)
+
             
+            if torch.cuda.is_available():
+                classifier_lpm = classifier_lpm.cuda()
+
+            # for x_batch, y_mapping, y_batch in train_loader:
+            for e in range(budget):
+                # just take the last batch_size items to train, these are selected out of the pool to train on
+                x_batch, y_mapping, y_batch = xseed[-batch_size:], y_mappingseed[-batch_size:], yseed[-batch_size:]
+                x_batch = x_batch.to(device)
+                y_mapping = y_mapping.to(device)
+                y_batch = y_batch.to(device)
+                batch_size = x_batch.shape[0]
+                
+                # train with the seed and later the pool
+                classifier.train()
+                optimizer.zero_grad()
+                optimizer2.zero_grad()
+                yhat, kd_mid, trans_mid, ss_mid = classifier(x_batch,y_mapping)
+                loss = criterion(yhat, y_batch)
+                loss.mean().backward()
+                optimizer.step()           
+
+                batch_losses.append(loss.mean().item()) #.mean()
+
+                # obtain measurements
+                # measurements is list of 4 items
+                measurements = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
+                                    mapping_test_Y_new, test_Y_new)
+                
+                # specialcase for first item of the new seed, the first measurements list needs to be appended to the full lists
+                # the following items will just be added to this list. Numpy can actually add 2 lists so this is used
+                # for measurements we divide by the max number
+                # one list per seed, so budget amount of lists to which we add the other lists
+                if measurements != None and seednr == startseed:
+                    measurements = np.array(measurements)/max_seednr
+                    full_measurements[active_learner].append(measurements.tolist())
+                # numpy can add values in lists, python just makes bigger listts
+                elif measurements != None:
+                    pythonlist = full_measurements[active_learner][e] 
+                    numpylist = np.array(pythonlist) + np.array(measurements)/max_seednr
+                    full_measurements[active_learner][e] = numpylist.tolist()
+                    # print(np.array(full_measurements[active_learner]).shape)
+                    # print(e)
+                    # print(full_measurements[active_learner][e])
+                    # exit()
+                
 
 
 
-            ############## ACTIVE LEARNING PART ##############
-            chosen_indices = active_random(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                ############## ACTIVE LEARNING PART ##############
+                if active_learner == "random":
+                    chosen_indices = active_random(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                elif active_learner == "worstcase":
+                    # chosen_indices = active_worstcase(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                    chosen_indices = worstcasesvm_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                    # chosen_indices = np.arange(int(batch_size)).tolist()
+                elif active_learner == "svm":
+                    chosen_indices = svm_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                elif active_learner == "rf":
+                    chosen_indices = forest_al_learner.forward(xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size)
+                elif active_learner == "lpm":
+                    # Loss learning module
 
-            # add selected items to the seed
-            xseed = torch.cat((xseed,xpool[chosen_indices]),0)
-            y_mappingseed = torch.cat((y_mappingseed,y_mappingpool[chosen_indices]),0)
-            yseed = torch.cat((yseed,ypool[chosen_indices]),0)
+                    # train the loss prediction module with the seed
+                    # if epoch <= 1:
+                    optimizer.zero_grad()
+                    optimizer2.zero_grad()
+                    # try:
+                    # Makes predictions detach old loss function (only update over loss prediction module)
+                    kd_mid, trans_mid, ss_mid = kd_mid.detach(), trans_mid.detach(), ss_mid.detach()
+                    predicted_loss = classifier_lpm(kd_mid, trans_mid, ss_mid)
 
-            # calculate which items need to go from the pool
-            all_indices = np.arange(0, len(xpool))
-            non_chosen_items = list(set(all_indices) - set(chosen_indices))
+                    loss2 = lp_criterion(predicted_loss, loss.unsqueeze(1).detach())
+                    loss3 = loss.mean().detach() + loss2
 
-            # remove the seeds from the pool
-            xpool = xpool[non_chosen_items]
-            y_mappingpool = y_mappingpool[non_chosen_items]
-            ypool = ypool[non_chosen_items]
-    # print('inside')
-    # print(full_measurements["random"])
-    # print('')
-    # print(full_measurements["random"][0])
-    # import statistics
-    # print("")
-    # print(statistics.mean(full_measurements["random"]))
-    # exit(0)
+                    # Computes gradients and updates model
+                    loss3.backward()
+                    optimizer2.step()
+                    # except:
+                    #     print("WEIRD ERROR")
+                    optimizer2.zero_grad()
+
+                    # predict best items to select in the pool
+                    classifier.eval()
+                    # get the model output of the xpools (no training)
+                    _, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device),y_mappingpool.to(device))
+                    kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
+                    predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
+                    # # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
+                    # true_ranking = np.asarray(yhat_test.unsqueeze(1).cpu().detach().numpy())
+                    predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+                    
+                    if lpm_selection == "original":
+                        # the original loss prediction module
+                        # get the top 10 highest loss indices
+                        top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
+                        # these are in a list of a list so unpack it
+                        chosen_indices = [i[0] for i in top_10_loss_indices]
+                    elif lpm_selection == "kmeans":
+                        kmeans = KMeans(
+                            init="random",
+                            n_clusters=batch_size*4,
+                            n_init=10,
+                            max_iter=300,
+                            random_state=42
+                        )
+                        scaler = StandardScaler()
+                        scaled_features = scaler.fit_transform(xpool)
+                        kmeans.fit(scaled_features)
+
+                        
+                        # kmeans selection
+                        # print(predicted_losses_array.shape[0])
+                        # print(kmeans.labels_.shape[0])
+                        # make sure that kmeans will work
+                        assert predicted_losses_array.shape[0] == kmeans.labels_.shape[0]
+
+                        # make a dataframe with two columns, the losses and cluster number of the items in the pool and sort them
+                        # the index number is kept so we have the index of the highest loss items in the top
+                        df1, df2 = pd.DataFrame(predicted_losses_array, columns = ['losses']), pd.DataFrame(kmeans.labels_, columns = ['cluster'])
+                        df3 = pd.concat([df1, df2], axis=1)
+                        df4 = df3.sort_values('losses',
+                                        ascending=False)
+                        chosen_indices, chosen_clusters = [], []
+                        # choose the items if the cluster is not already represented (chosen)
+                        for i in df4.iterrows():
+                            # stop condition
+                            if len(chosen_indices) == 10:
+                                break
+                            # add to chosen indices if it is not chosen (inherently from high loss to low)
+                            if int(i[1][1]) not in chosen_clusters:
+                                chosen_clusters.append(int(i[1][1]))
+                                chosen_indices.append(int(i[0]))
+
+                        # print(chosen_indices)
+                        # print(chosen_clusters)
+
+                        # print(df4)
+                        # print(df4['cluster'][:20])
+                        # print(kmeans.cluster_centers_.shape)
+                        # print(kmeans.cluster_centers_[5].shape)
+                        # exit()
+                    elif lpm_selection == "distance":
+                        pass
+                    else:
+                        print("no lpm selection measure given")
+                        pass
+
+                # add selected items to the seed
+                xseed = torch.cat((xseed,xpool[chosen_indices]),0)
+                y_mappingseed = torch.cat((y_mappingseed,y_mappingpool[chosen_indices]),0)
+                yseed = torch.cat((yseed,ypool[chosen_indices]),0)
+
+                # calculate which items need to go from the pool
+                all_indices = np.arange(0, len(xpool))
+                non_chosen_items = list(set(all_indices) - set(chosen_indices))
+
+                # remove the seeds from the pool
+                xpool = xpool[non_chosen_items]
+                y_mappingpool = y_mappingpool[non_chosen_items]
+                ypool = ypool[non_chosen_items]
     
-    return full_measurements["random"]
+    return full_measurements[active_learner]
                 
         # full_losses.append(batch_losses)
         # training_loss = np.mean(batch_losses)
@@ -1051,6 +1282,15 @@ def RF_regression_sum(regressor, X):
     # take top 10 predictions for active learning
     query_idx = np.argpartition(std,-10)[-10:]
     return query_idx, X[query_idx]
+
+def RF_regression_sum_worstcase(regressor, X):
+    # predict rf
+    std = regressor.predict(X)
+    # sum label prediction
+    std = np.sum(std, axis=1)
+    lowest10 = np.argpartition(std, 10)[:10]
+    query_idx = lowest10[np.argsort(std[lowest10])]
+    return query_idx, X[query_idx]
     
 # run like  100 times curves mostly for random
 # pretrsain on known labels
@@ -1067,6 +1307,25 @@ class ActiveForestLearner:
         self.learner = ActiveLearner(
             estimator=RandomForestRegressor(),
             query_strategy=RF_regression_sum,
+        )
+
+    def forward(self, xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size):
+        # print(xseed[-batch_size:].shape, yseed[-batch_size:].shape)
+        # only take teach the new items
+        self.learner.teach(xseed.numpy()[-batch_size:], yseed.numpy()[-batch_size:])
+        
+        query_idx, query_instance = self.learner.query(xpool.numpy()) #
+        
+        return query_idx
+
+# select indices from xpool which have some meaning for the random forest
+class ActiveForestLearnerWorstCase:
+    def __init__(self):
+        # probably the xseed and yseed are in tensors and they need to be in numpy 
+        # initializing the active learner
+        self.learner = ActiveLearner(
+            estimator=RandomForestRegressor(),
+            query_strategy=RF_regression_sum_worstcase,
         )
 
     def forward(self, xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, batch_size):
