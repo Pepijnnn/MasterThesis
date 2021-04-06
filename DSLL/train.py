@@ -659,7 +659,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     
     # for now altype can be worstcase, random, forest, svm, or lpm
     # set the range for which active learning methods you want to see
-    altypes = ['worstcase', 'svm', 'random',  'rf',  'lpm', 'lpm_pointwise', 'lpm_rankwise'][4:5]
+    altypes = ['worstcase', 'svm', 'random',  'rf',  'lpm', 'lpm_pointwise', 'lpm_rankwise'][2:5]
     for altype in altypes:
         # create new classifier
         classifier = IntegratedDSLL(hyper_params) 
@@ -682,13 +682,21 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
             {'params':classifier.transformation.parameters()},
         ], weight_decay=hyper_params.classifier_L2, lr = 0.001)
 
+        # lp_criterions = {"ndcg": approxNDCGLoss(), "lambda":LambdaLoss(), "listnet": ListNetLoss(), "listMLE": ListMLELoss(), \
+        #                           "RMSE":RMSELoss(), "rank":RankLoss(),"mapranking":MapRankingLoss(),"spearman":SpearmanLoss()}
+
         # main loss function
         criterion = AsymmetricLoss(reduce=False)
 
         # train_step = make_train_DSLL(classifier, criterion, optimizer)
         eval_step = make_eval_DSLL(classifier, criterion, optimizer)
 
-        lp_criterion = MarginRankingLoss_learning_loss()
+        # pairwise ranking loss
+        # lp_criterion = MarginRankingLoss_learning_loss()
+
+        # MSELoss doesn't work for the lp
+        # lp_criterion = nn.MSELoss() # approxNDCGLoss
+        lp_criterion = LambdaLoss()
         
         
         classifier_lpm = LossPredictionMod(hyper_params)
@@ -721,7 +729,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
         max_budget = int(len(xpool)/batch_size)
         # how big is the active learning budget
         # make the budget the same or half as the max
-        budget = int(max_budget//2) #int(max_budget/2)
+        budget = int(max_budget-10) #int(max_budget/2)
         # for each epoch
         x_axis, ndcg_saved = [], []
 
@@ -745,17 +753,29 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                 max_iter=300,
                 random_state=42
             )
-            # try with and without standard scaler
-            # try with dimensionality reduction?
+            # try with and without standard scaler? Works better
+            # try with dimensionality reduction? Works better
             from sklearn.decomposition import PCA
             pca = PCA(n_components=4)
             scaler = StandardScaler()
             scaled_features = scaler.fit_transform(xpool)
             principalComponents = pca.fit_transform(scaled_features)
             
-            # kmeans.fit(scaled_features)
             kmeans.fit(principalComponents)
             df2 = pd.DataFrame(kmeans.labels_, columns = ['cluster'])
+            # add the pca locations of the points as a column
+            # df2['pca'] = pd.Series(principalComponents.tolist())
+            # exit()
+        elif lpm_selection == "distance":
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=4)
+            scaler = StandardScaler()
+            scaled_features = scaler.fit_transform(xpool)
+            principalComponents = pca.fit_transform(scaled_features)
+            
+            df2_pca = pd.DataFrame()
+            df2_pca['pca'] = pd.Series(principalComponents.tolist())
+
 
 
         set_random_seed(seednr)
@@ -838,6 +858,23 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                     # # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
                     # true_ranking = np.asarray(yhat_test.unsqueeze(1).cpu().detach().numpy())
                     predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+                    
+                    lpm_predictions = predicted_losses_array
+                    lpm_real_values = 
+                    # def calc_distances(p0, points):
+                    #     return ((p0 - points)**2).sum(axis=1)
+                    # # Next, here is a way to implement your algorithm using more numpy functions:
+
+                    # def graipher(pts, K, indices):
+                    #     farthest_pts = np.zeros((K, 4))
+                    #     farthest_pts[0] = pts[np.random.randint(len(pts))]
+                    #     distances = calc_distances(farthest_pts[0], pts)
+                    #     for i in range(1, K):
+                    #         farthest_pts[i] = pts[np.argmax(distances)]
+                    #         distances = np.minimum(distances, calc_distances(farthest_pts[i], pts))
+                    #     return farthest_pts
+                    # print(graipher(np.random.random_sample((20,4)), 3))                  
+                    # exit()
 
                     if lpm_selection == "original":
                         # the original loss prediction module
@@ -851,7 +888,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         # the index number is kept so we have the index of the highest loss items in the top
                         # df1, df2 = pd.DataFrame(predicted_losses_array, columns = ['losses']), pd.DataFrame(kmeans.labels_, columns = ['cluster'])
                         # df2 are the labels from the pool
-                        df1= pd.DataFrame(predicted_losses_array, columns = ['losses'])
+                        df1 = pd.DataFrame(predicted_losses_array, columns = ['losses'])
                         df3 = pd.concat([df1, df2], axis=1)
                         df4 = df3.sort_values('losses',ascending=False)
 
@@ -869,6 +906,16 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                                 assert int(df4.loc[int(i[0])].cluster) == int(df2.loc[int(i[0])].cluster)
                                 # drop the chosen index from the pool
                                 df2.drop(int(i[0]))
+                        
+                        # distance to cluster center
+                        # chosen_indices = []
+                        # from scipy.spatial import distance
+                        # for i in df4.iterrows():
+                        #     cluster_locations = kmeans.cluster_centers_
+                        #     # print(cluster_locations)
+                        #     print(i)
+                        #     exit()
+
                         # top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
                         # these are in a list of a list so unpack it
                         # chosen_indices2 = [i[0] for i in top_10_loss_indices]
@@ -891,7 +938,20 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         #     lpm_selection = "original"
                         
                     elif lpm_selection == "distance":
-                        pass
+                        # get the top batch_size * 4 highest loss indices
+                        top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
+                        # these are in a list of a list so unpack it
+                        chosen_indices = [i[0] for i in top_10_loss_indices]
+                        df1 = pd.DataFrame(predicted_losses_array, columns = ['losses'])
+                        df3 = pd.concat([df1, df2_pca], axis=1)
+                        df4 = df3.sort_values('losses',ascending=False)
+                        df4_top_indices = df4.index[:batch_size*4]
+                        # TODO implement graipher
+                        # print(poi)
+                        # print(close_points)
+
+                        # exit()
+                        
                     else:
                         print("no lpm selection measure given")
                         pass
@@ -1001,6 +1061,7 @@ def do_many_active(active_learner, budget, device, xseed_old, y_mappingseed_old,
                                 mapping_test_Y_new_old, test_Y_new_old, batch_size, max_seednr, featureKD_model, epochs =1):
     full_measurements = defaultdict(list)
     batch_losses = []
+    max_seednr+=1
     # which selection procedure used
     lpm_selection = "kmeans"
     # max_seednr = random_amount
@@ -1542,27 +1603,27 @@ class RankHardLoss(torch.nn.Module):
 #         return map_tot
 
 
-# class SpearmanLoss(torch.nn.Module):
-#     """ Loss function  inspired by spearmann correlation.self
-#     Required the trained model to have a good initlization.
-#     Set lbd to 1 for a few epoch to help with the initialization.
-#     """
-#     def __init__(self, sorter_type, seq_len=None, sorter_state_dict=None, lbd=0):
-#         super(SpearmanLoss, self).__init__()
-#         self.sorter = model_loader(sorter_type, seq_len, sorter_state_dict)
+class SpearmanLoss(torch.nn.Module):
+    """ Loss function  inspired by spearmann correlation.self
+    Required the trained model to have a good initlization.
+    Set lbd to 1 for a few epoch to help with the initialization.
+    """
+    def __init__(self, sorter_type, seq_len=None, sorter_state_dict=None, lbd=0):
+        super(SpearmanLoss, self).__init__()
+        self.sorter = model_loader(sorter_type, seq_len, sorter_state_dict)
 
-#         self.criterion_mse = torch.nn.MSELoss()
-#         self.criterionl1 = torch.nn.L1Loss()
+        self.criterion_mse = torch.nn.MSELoss()
+        self.criterionl1 = torch.nn.L1Loss()
 
-#         self.lbd = lbd
+        self.lbd = lbd
 
-#     def forward(self, mem_pred, mem_gt, pr=False):
-#         rank_gt = get_rank(mem_gt)
+    def forward(self, mem_pred, mem_gt, pr=False):
+        rank_gt = get_rank(mem_gt)
 
-#         rank_pred = self.sorter(mem_pred.unsqueeze(
-#             0)).view(-1)
+        rank_pred = self.sorter(mem_pred.unsqueeze(
+            0)).view(-1)
 
-#         return self.criterion_mse(rank_pred, rank_gt) + self.lbd * self.criterionl1(mem_pred, mem_gt)
+        return self.criterion_mse(rank_pred, rank_gt) + self.lbd * self.criterionl1(mem_pred, mem_gt)
 
 class approxNDCGLoss(nn.Module):
     def __init__(self):
