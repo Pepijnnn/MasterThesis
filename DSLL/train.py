@@ -90,26 +90,24 @@ def make_eval_step(model, loss_fn, optimizer):
 
 def observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
                         mapping_test_Y_new, test_Y_new):
+    # print nicely keeping track of where we are at the loss
     print('[%d/%d]Loss: %.3f' % (
         hyper_params.currentEpoch + 1, hyper_params.classifier_epoch, np.mean(training_losses)))
     if ((((hyper_params.currentEpoch + 1) % 10) == 0) | ((hyper_params.currentEpoch + 1)
                                                          == hyper_params.classifier_epoch)):
-        # print('train performance')
+        print('train performance')
         pred_Y_train = predict_integrated(classifier, train_X, mapping_train_Y_new)
-        # pred_Y_train = pred_Y_train.round()
-        # print("ashdsh")
-        # print(train_Y_new)
-        # exit()
+
         _ = print_predict(train_Y_new, pred_Y_train, hyper_params)
-        # print("double?")
 
     # if (((hyper_params.currentEpoch + 1) % 5 == 0) | (hyper_params.currentEpoch < 10)):
     print('test performance')
+
     pred_Y = predict_integrated(classifier, test_X, mapping_test_Y_new)
-    # pred_Y = pred_Y.round()
-    measurements = print_predict(test_Y_new, pred_Y, hyper_params)
+
+    measurements = print_predict(test_Y_new.numpy(), pred_Y, hyper_params)
     return measurements
-    # return None
+
 
 
 def observe_train(hyper_params, classifier, training_losses, train_X, train_Y, test_X, test_Y):
@@ -637,7 +635,7 @@ from sklearn.multiclass import OneVsRestClassifier
 from sklearn.metrics import jaccard_score, f1_score
 from sklearn.linear_model import LogisticRegression
 
-def classifier_chain(train_loader):
+def classifier_chain(train_loader, test_ds):
     xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, oldyseed, oldypool = train_loader
 
     xseed_save, y_mappingseed_save, yseed_save, xpool_save, y_mappingpool_save, ypool_save, oldyseed_save, oldypool_save = xseed.numpy(), y_mappingseed.numpy(), yseed.numpy(), xpool.numpy(), y_mappingpool.numpy(), ypool.numpy(), oldyseed.numpy(), oldypool.numpy()
@@ -649,7 +647,8 @@ def classifier_chain(train_loader):
     xseed_save = np.concatenate((xseed_save,oldyseed_save),axis=1)
     xpool_save = np.concatenate((xpool_save,oldypool_save),axis=1)
     
-
+    x_tensor_test, y_mapping_tensor_test, old_y_tensor_test, y_tensor_test = test_ds
+    x_tensor_test, y_mapping_tensor_test, old_y_tensor_test, y_tensor_test = x_tensor_test.numpy(), y_mapping_tensor_test.numpy(), old_y_tensor_test.numpy(), y_tensor_test.numpy()
     
 
     cc_f1_scores = []
@@ -667,8 +666,8 @@ def classifier_chain(train_loader):
                     base_lr = LogisticRegression()
                     chain = ClassifierChain(base_lr, order='random', random_state=10)
                     chain.fit(xseed, yseed)
-                    Y_pred_ovr = chain.predict(xpool)
-                    ovr_f1_score = f1_score(ypool, Y_pred_ovr, average='micro')
+                    Y_pred_ovr = chain.predict(x_tensor_test)
+                    ovr_f1_score = f1_score(y_tensor_test, Y_pred_ovr, average='micro')
                     cc_f1_scores.append(ovr_f1_score)
                     # if altype == "svm":
                     chosen_indices = svm_al_learner.forward(torch.from_numpy(xseed), torch.from_numpy(y_mappingseed), torch.from_numpy(yseed), torch.from_numpy(xpool), torch.from_numpy(y_mappingpool), torch.from_numpy(ypool), batch_size)
@@ -690,8 +689,8 @@ def classifier_chain(train_loader):
                     base_lr = LogisticRegression()
                     ovr = OneVsRestClassifier(base_lr)
                     ovr.fit(xseed, yseed)
-                    Y_pred_ovr = ovr.predict(xpool)
-                    ovr_f1_score = f1_score(ypool, Y_pred_ovr, average='micro')
+                    Y_pred_ovr = ovr.predict(x_tensor_test)
+                    ovr_f1_score = f1_score(y_tensor_test, Y_pred_ovr, average='micro')
                     br_f1_scores.append(ovr_f1_score)
                     # if altype == "svm":
                     chosen_indices = svm_al_learner.forward(torch.from_numpy(xseed), torch.from_numpy(y_mappingseed), torch.from_numpy(yseed), torch.from_numpy(xpool), torch.from_numpy(y_mappingpool), torch.from_numpy(ypool), batch_size)
@@ -737,8 +736,8 @@ def classifier_chain(train_loader):
     exit()
 
 ################################################################## AL DSLL ##################################################################
-def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader, use_al, seednr):
-    classifier_chain(train_loader)
+def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader, test_ds, use_al, seednr):
+    # classifier_chain(train_loader, test_ds)
     # if use_al is True then there is no train loader, then it is a combination of the seed and pool which each consist out of three items
 
     hyper_params.classifier_input_dim = train_X.shape[1]
@@ -764,6 +763,9 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     # which of the loss prediction module selection procedures you want to use
     # choose{original, kmeans, distance}
     # lpm_selection = "original" #"kmeans"
+    x_tensor_test, y_mapping_tensor_test, old_y_tensor_test, y_tensor_test = test_ds
+    # x_tensor_test, y_mapping_tensor_test, old_y_tensor_test, y_tensor_test = x_tensor_test.numpy(), y_mapping_tensor_test.numpy(), old_y_tensor_test.numpy(), y_tensor_test.numpy()
+    
     
     # for now altype can be worstcase, random, forest, svm, or lpm
     # set the range for which active learning methods you want to see
@@ -793,7 +795,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
         # lp_criterions = {"ndcg": approxNDCGLoss(), "lambda":LambdaLoss(), "listnet": ListNetLoss(), "listMLE": ListMLELoss(), \
         #                           "RMSE":RMSELoss(), "rank":RankLoss(),"mapranking":MapRankingLoss(),"spearman":SpearmanLoss()}
         
-        lpm_selection = "kmeans" #"kmeans"
+        lpm_selection = "original" #"kmeans"
 
         # main loss function
         criterion = AsymmetricLoss(reduce=False)
@@ -839,7 +841,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
         max_budget = int(len(xpool)/batch_size)
         # how big is the active learning budget
         # make the budget the same or half as the max
-        budget = int(max_budget-10) #int(max_budget/2)
+        budget = int(max_budget-3) #int(max_budget/2)
         # for each epoch
         x_axis, ndcg_saved = [], []
 
@@ -875,7 +877,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
             # add the pca locations of the points as a column
             # df2['pca'] = pd.Series(principalComponents.tolist())
             # exit()
-        # TODO fix the distance 
+        # TODO not working yet! fix the distance 
         elif lpm_selection == "distance":
             from sklearn.decomposition import PCA
             pca = PCA(n_components=4)
@@ -897,7 +899,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
             batch_losses = []
             hyper_params.currentEpoch = epoch
             
-            # for x_batch, y_mapping, y_batch in train_loader:
+            # loop over the max iterations of teh budget
             for bud in range(budget):
                 # just take the last batch_size items to train, these are selected out of the pool to train on
                 x_batch, y_mapping, y_batch = xseed[-batch_size:], y_mappingseed[-batch_size:], yseed[-batch_size:]
@@ -919,8 +921,8 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
 
                 # obtain measurements
                 if epoch <= 10 : # and len(batch_losses) % 1 == 0
-                    measurements = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, test_X,
-                                mapping_test_Y_new, test_Y_new)
+                    measurements = observe_train_DSLL(hyper_params, classifier, training_losses, train_X, mapping_train_Y_new, train_Y_new, x_tensor_test,
+                                y_mapping_tensor_test, y_tensor_test) # test_X, mapping_test_Y_new, test_Y_new
                     if measurements != None:
                         full_measurements[altype].append(measurements)
 
@@ -959,30 +961,43 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         optimizer2.zero_grad()
                         # optimizer3.zero_grad()
 
-                    # predict best items to select in the pool
+                    # calculate the error between the predicted loss and the real loss of the test set
                     classifier.eval()
-                    # get the model output of the xpools (no training)
-                    yhat_test, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device),y_mappingpool.to(device))
+                    classifier_lpm.eval()
+
+                    # get the model output of the test (no training)
+                    yhat_test, kd_mid_test, trans_mid_test, ss_mid_test = classifier(x_tensor_test.to(device),y_mapping_tensor_test.to(device))
                     kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
                     predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
-                    # # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
-                    # true_ranking = np.asarray(yhat_test.unsqueeze(1).cpu().detach().numpy())
+
                     predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
                     
-                    # xpool to actual loss calculation
-                    loss_xpool = criterion(yhat_test, ypool.to(device))
-                    optimizer.zero_grad()
-                    optimizer2.zero_grad()
+                    # y test to actual loss of lpm calculation
+                    loss_test = criterion(yhat_test, y_tensor_test.to(device))
+                    
 
                     # calculate the RMSE between the actual and predicted pool loss
-                    loss_xpool = loss_xpool.cpu().detach().numpy()
-                    # resize only to remove the 1 of the last dimension, if not it is less acurate
+                    loss_test = loss_test.cpu().detach().numpy()
+                    
+                    # resize only to remove the 1 of the last dimension (list in lists), if not it is less acurate 
+                    predicted_losses_array.resize(loss_test.shape[0],)
 
-                    predicted_losses_array.resize(loss_xpool.shape[0],)
-                    lpm_error = rmse(predicted_losses_array,loss_xpool)
-                    # print(type(lpm_error))
+                    # calculate the rmse between the predicted lpm loss and the actual loss
+                    lpm_error = rmse(predicted_losses_array,loss_test)
+
+                    # append all the errors of each iteration of the budget to the list for visualization later on
                     lpm_error_list.append(lpm_error)
-                    # exit()
+
+                    # predict best items to select in the pool
+                    yhat_test, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device), y_mappingpool.to(device))
+                    kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
+                    predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
+
+                    predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
+
+                    optimizer.zero_grad()
+                    optimizer2.zero_grad()
+                    
                     # def calc_distances(p0, points):
                     #     return ((p0 - points)**2).sum(axis=1)
                     # # Next, here is a way to implement your algorithm using more numpy functions:
@@ -1003,10 +1018,10 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         # get the top 10 highest loss indices, 10 is here batch_size
                         top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
                         # these are in a list of a list so unpack it
-                        # print(top_10_loss_indices[:10])
-                        # print(top_10_loss_indices.shape)
-                        # chosen_indices = [i for i in top_10_loss_indices]
+                        top_10_loss_indices.resize(batch_size,)
+                        
                         chosen_indices = top_10_loss_indices
+                        
                     elif lpm_selection == "kmeans":
                         
 
@@ -1033,35 +1048,6 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                                 # drop the chosen index from the pool
                                 df2.drop(int(i[0]))
                         
-                        # distance to cluster center
-                        # chosen_indices = []
-                        # from scipy.spatial import distance
-                        # for i in df4.iterrows():
-                        #     cluster_locations = kmeans.cluster_centers_
-                        #     # print(cluster_locations)
-                        #     print(i)
-                        #     exit()
-
-                        # top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
-                        # these are in a list of a list so unpack it
-                        # chosen_indices2 = [i[0] for i in top_10_loss_indices]
-                        # chosen_indices.sort()
-                        # chosen_indices2.sort()
-                        # print(chosen_indices)
-                        # print(chosen_indices2)
-                        # print(set(chosen_indices)- set(chosen_indices2))
-
-                        # choose different clusters just as now or closer to center clusters
-                        # print(chosen_indices)
-                        # print(chosen_clusters)
-
-                        # print(df4)
-                        # print(df4['cluster'][:20])
-                        # print(kmeans.cluster_centers_.shape)
-                        # print(kmeans.cluster_centers_[5].shape)
-                        # exit()
-                        # if bud >= int(budget//2):
-                        #     lpm_selection = "original"
                         
                     elif lpm_selection == "distance":
                         # get the top batch_size * 4 highest loss indices
@@ -1159,9 +1145,9 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     # print(full_measurements)
     for e, i in enumerate(altypes):
         F1_Micro = np.hstack(np.array(full_measurements[i])[:,0])
-        F1_Macro = np.hstack(np.array(full_measurements[i])[:,1])
+        # F1_Macro = np.hstack(np.array(full_measurements[i])[:,1])
         AUC_micro = np.hstack(np.array(full_measurements[i])[:,2])
-        AUC_macro = np.hstack(np.array(full_measurements[i])[:,3])
+        # AUC_macro = np.hstack(np.array(full_measurements[i])[:,3])
         
         # define x-axis as arange of the length of the array
         x_axis = [i for i in range(len(F1_Micro))]
@@ -1169,7 +1155,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
         # plot the lines
         plt.plot(x_axis, F1_Micro, label=f'F1_Micro_{i}',color  = f'#{colours[e][0]}')
         # plt.plot(x_axis, F1_Macro, label=f'F1_Macro_{i}',color  = f'#{colours[e][1]}')
-        # plt.plot(x_axis, AUC_micro, label=f'AUC_micro_{i}',color= f'#{colours[e][2]}')
+        plt.plot(x_axis, AUC_micro, label=f'AUC_micro_{i}',color= f'#{colours[e][2]}')
         # plt.plot(x_axis, AUC_macro, label=f'AUC_macro_{i}',color= f'#{colours[e][3]}')
 
     # if you want to plot RMSE
@@ -1181,8 +1167,8 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     plt.ylabel('Values', fontsize=16)
 
     # from scipy.stats import linregress
-    # plt.title("Active learning with DSLL")
-    plt.title("RMSE lpm to real loss")
+    plt.title("Active learning with DSLL")
+    # plt.title("RMSE lpm to real loss")
     plt.legend(bbox_to_anchor=(1,1), loc="upper left")
     plt.show()
     # exit()

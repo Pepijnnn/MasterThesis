@@ -112,7 +112,9 @@ def print_predict(ground_truth, prediction, hyper_params):
         AUC_macro, AUC_micro = 0.0, 0.0
     Coverage_error = round((coverage_error(ground_truth, prediction)) / ground_truth.shape[1], rounded)
     rankloss = round(label_ranking_loss(ground_truth, prediction), rounded)
+
     One_error = round(one_error(ground_truth, prediction), rounded)
+    
     Precision_at_ks = precision_at_ks(ground_truth, prediction)
     Log_loss = round(log_loss(ground_truth, prediction), rounded)
     Average_precision_score = round(average_precision_score(ground_truth, prediction), rounded)

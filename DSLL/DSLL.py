@@ -29,11 +29,29 @@ class CustomDataset(Dataset):
     def __len__(self):
         return len(self.x)
 
+def al_train_test_split(x, ymap, yold, ynew, test_percentage):
+    # randomly select the indices of the train and test set
+    all_indices = np.arange(0, len(x))
+    random_test_indices = np.random.randint(0, len(x), int(len(x)*(test_percentage/100)))
+    random_train_indices = list(set(all_indices) - set(random_test_indices))
+    
+    # 
+    x_train, ymap_train, yold_train, ynew_train = x[random_train_indices], ymap[random_train_indices], yold[random_train_indices], ynew[random_train_indices]
+    x_test, ymap_test, yold_test, ynew_test = x[random_test_indices], ymap[random_test_indices], yold[random_test_indices], ynew[random_test_indices]
+
+    return x_train, ymap_train, yold_train, ynew_train, x_test, ymap_test, yold_test, ynew_test
+
+
+
 # class CustomActiveLearningDataset(Dataset):
-def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, old_y_tensor, y_tensor, seeds = 10):
+def CustomActiveLearningDataset(x_tensor, y_mapping_tensor, old_y_tensor, y_tensor, batch_size = 10):
+    # splits the dataset in train (seed and pool) and test set
+    test_percentage = 10
+    x_tensor, y_mapping_tensor, old_y_tensor, y_tensor, x_tensor_test, y_mapping_tensor_test, old_y_tensor_test, y_tensor_test = al_train_test_split(x_tensor, y_mapping_tensor, old_y_tensor, y_tensor, test_percentage)
+
     # randomly select the seeds
     all_indices = np.arange(0, len(x_tensor))
-    random_seed_list = np.random.randint(0, len(x_tensor), seeds)
+    random_seed_list = np.random.randint(0, len(x_tensor), batch_size)
 
     # trick to remove items from random seed list in all indices
     difference = list(set(all_indices) - set(random_seed_list))
@@ -56,10 +74,8 @@ def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, old_y_tensor, y_tenso
     ypool = ypool[difference]
     oldypool = oldypool[difference]
 
-    # train_test_split(xpool, ypool)
-
     # return seeds and pool
-    return (xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, oldyseed, oldypool)
+    return (xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, oldyseed, oldypool), (x_tensor_test, y_mapping_tensor_test, old_y_tensor_test, y_tensor_test)
 
 
 if __name__ == '__main__':
@@ -214,7 +230,7 @@ if __name__ == '__main__':
         # possible fix is to use random set each time in loader which changes
         if use_al == True:
             batch_size = 10
-            seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_old_tensor,train_Y_new_tensor, batch_size)
+            seed_pool, test_ds = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_old_tensor,train_Y_new_tensor, batch_size)
         else:
             train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
         
@@ -235,7 +251,7 @@ if __name__ == '__main__':
                 # CC_dataset = (train_X, train_Y, train_Y_rest, test_X, test_Y, test_Y_rest)
                 # exit()
                 AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
-                                mapping_test_Y_new, test_Y_new, seed_pool, use_al, seednr)
+                                mapping_test_Y_new, test_Y_new, seed_pool, test_ds, use_al, seednr)
             else:    
                 # hyper_params.classifier_epoch = int(40 + 1 * hyper_params.batch_size)
                 train_DSLL_loader = DataLoader(dataset=train_data_DSLL,
