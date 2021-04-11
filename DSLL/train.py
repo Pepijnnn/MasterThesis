@@ -628,9 +628,117 @@ def set_random_seed(seednr):
     torch.backends.cudnn.enabled=False
     torch.backends.cudnn.deterministic=True
 
+def rmse(actual, pred): 
+    actual, pred = np.array(actual), np.array(pred)
+    return np.sqrt(np.square(np.subtract(actual,pred)).mean())
+
+from sklearn.multioutput import ClassifierChain
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.metrics import jaccard_score, f1_score
+from sklearn.linear_model import LogisticRegression
+
+def classifier_chain(train_loader):
+    xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, oldyseed, oldypool = train_loader
+
+    xseed_save, y_mappingseed_save, yseed_save, xpool_save, y_mappingpool_save, ypool_save, oldyseed_save, oldypool_save = xseed.numpy(), y_mappingseed.numpy(), yseed.numpy(), xpool.numpy(), y_mappingpool.numpy(), ypool.numpy(), oldyseed.numpy(), oldypool.numpy()
+    batch_size = len(xseed)
+    max_budget = int(len(xpool)/batch_size)
+    # how big is the active learning budget
+    # make the budget the same or half as the max
+    budget = int(max_budget//2)    
+    xseed_save = np.concatenate((xseed_save,oldyseed_save),axis=1)
+    xpool_save = np.concatenate((xpool_save,oldypool_save),axis=1)
+    
+
+    
+
+    cc_f1_scores = []
+    br_f1_scores = []
+    altypes = ['svm', 'random',  'rf'][:1]
+    for br_cc in ["BR"]: #"CC"
+        svm_al_learner = ActiveSVMLearner()
+        forest_al_learner = ActiveForestLearner()
+        xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, oldyseed, oldypool= xseed_save, y_mappingseed_save, yseed_save, xpool_save, y_mappingpool_save, ypool_save, oldyseed_save, oldypool_save
+        for altype in altypes:
+            
+            for bud in range(budget):
+                print(bud)
+                if br_cc =="CC" :
+                    base_lr = LogisticRegression()
+                    chain = ClassifierChain(base_lr, order='random', random_state=10)
+                    chain.fit(xseed, yseed)
+                    Y_pred_ovr = chain.predict(xpool)
+                    ovr_f1_score = f1_score(ypool, Y_pred_ovr, average='micro')
+                    cc_f1_scores.append(ovr_f1_score)
+                    # if altype == "svm":
+                    chosen_indices = svm_al_learner.forward(torch.from_numpy(xseed), torch.from_numpy(y_mappingseed), torch.from_numpy(yseed), torch.from_numpy(xpool), torch.from_numpy(y_mappingpool), torch.from_numpy(ypool), batch_size)
+
+                    # add selected items to the seed
+                    xseed = np.concatenate((xseed,xpool[chosen_indices]),0)
+                    y_mappingseed = np.concatenate((y_mappingseed,y_mappingpool[chosen_indices]),0)
+                    yseed = np.concatenate((yseed,ypool[chosen_indices]),0)
+
+                    # calculate which items need to be deleted from the pool (the ones that are chosen==new seed)
+                    all_indices = np.arange(0, len(xpool))
+                    non_chosen_items = list(set(all_indices) - set(chosen_indices))
+
+                    # remove the seeds from the pool
+                    xpool = xpool[non_chosen_items]
+                    y_mappingpool = y_mappingpool[non_chosen_items]
+                    ypool = ypool[non_chosen_items]
+                if br_cc == "BR":
+                    base_lr = LogisticRegression()
+                    ovr = OneVsRestClassifier(base_lr)
+                    ovr.fit(xseed, yseed)
+                    Y_pred_ovr = ovr.predict(xpool)
+                    ovr_f1_score = f1_score(ypool, Y_pred_ovr, average='micro')
+                    br_f1_scores.append(ovr_f1_score)
+                    # if altype == "svm":
+                    chosen_indices = svm_al_learner.forward(torch.from_numpy(xseed), torch.from_numpy(y_mappingseed), torch.from_numpy(yseed), torch.from_numpy(xpool), torch.from_numpy(y_mappingpool), torch.from_numpy(ypool), batch_size)
+
+                    # add selected items to the seed
+                    xseed = np.concatenate((xseed,xpool[chosen_indices]),0)
+                    y_mappingseed = np.concatenate((y_mappingseed,y_mappingpool[chosen_indices]),0)
+                    yseed = np.concatenate((yseed,ypool[chosen_indices]),0)
+
+                    # calculate which items need to be deleted from the pool (the ones that are chosen==new seed)
+                    all_indices = np.arange(0, len(xpool))
+                    non_chosen_items = list(set(all_indices) - set(chosen_indices))
+
+                    # remove the seeds from the pool
+                    xpool = xpool[non_chosen_items]
+                    y_mappingpool = y_mappingpool[non_chosen_items]
+                    ypool = ypool[non_chosen_items]
+
+
+    # print(f1_scores)
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    plt.figure(figsize=(12, 7))
+    sns.set_style("darkgrid")
+    # define colours by hand (because easier to know what is happening)
+    colours = [["7215CC","008000", "00A000", "00C000", "00E000"], ["2CFF72","800000", "A00000", "C00000", "E00000"], ["D6D243","000080", "0000A0", "0000C0", "0000E0"], ["F74D7E","404000", "808000", "B0B000", "F0F000"], ["3E8DFF","404000", "808000", "B0B000", "F0F000"]]
+
+    x_axis = [i for i in range(len(br_f1_scores))]
+    # plt.plot(x_axis,cc_f1_scores)
+    plt.plot(x_axis,br_f1_scores)
+    plt.ylabel('F1', fontsize=16)
+
+    plt.xlabel('Instances', fontsize=18)
+    # plt.ylabel('Values', fontsize=16)
+
+    # from scipy.stats import linregress
+    # plt.title("Active learning with DSLL")
+    plt.title("F1 Classifier chain to real loss")
+    plt.legend(bbox_to_anchor=(1,1), loc="upper left")
+    plt.show()
+
+
+    exit()
+
 ################################################################## AL DSLL ##################################################################
 def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X, mapping_test_Y_new, test_Y_new, train_loader, use_al, seednr):
-    
+    classifier_chain(train_loader)
     # if use_al is True then there is no train loader, then it is a combination of the seed and pool which each consist out of three items
 
     hyper_params.classifier_input_dim = train_X.shape[1]
@@ -642,7 +750,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
     training_losses, full_losses, full_measurements = [], [], defaultdict(list)
 
     # base of active learning train with the seed then add from pool the best examples and train more
-    xseed_save, y_mappingseed_save, yseed_save, xpool_save, y_mappingpool_save, ypool_save = train_loader
+    xseed_save, y_mappingseed_save, yseed_save, xpool_save, y_mappingpool_save, ypool_save, _, _ = train_loader
     batch_size = len(xseed_save)
 
     # how many times (with different seed) do you want to run the random active learner (for smooth graph) leave at 5
@@ -655,11 +763,11 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
 
     # which of the loss prediction module selection procedures you want to use
     # choose{original, kmeans, distance}
-    lpm_selection = "kmeans" #"kmeans"
+    # lpm_selection = "original" #"kmeans"
     
     # for now altype can be worstcase, random, forest, svm, or lpm
     # set the range for which active learning methods you want to see
-    altypes = ['worstcase', 'svm', 'random',  'rf',  'lpm', 'lpm_pointwise', 'lpm_rankwise'][2:5]
+    altypes = ['worstcase', 'svm', 'random',  'rf',  'lpm', 'lpm_pointwise', 'lpm_rankwise'][4:5]
     for altype in altypes:
         # create new classifier
         classifier = IntegratedDSLL(hyper_params) 
@@ -684,6 +792,8 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
 
         # lp_criterions = {"ndcg": approxNDCGLoss(), "lambda":LambdaLoss(), "listnet": ListNetLoss(), "listMLE": ListMLELoss(), \
         #                           "RMSE":RMSELoss(), "rank":RankLoss(),"mapranking":MapRankingLoss(),"spearman":SpearmanLoss()}
+        
+        lpm_selection = "kmeans" #"kmeans"
 
         # main loss function
         criterion = AsymmetricLoss(reduce=False)
@@ -692,11 +802,11 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
         eval_step = make_eval_DSLL(classifier, criterion, optimizer)
 
         # pairwise ranking loss
-        # lp_criterion = MarginRankingLoss_learning_loss()
+        lp_criterion = MarginRankingLoss_learning_loss()
 
         # MSELoss doesn't work for the lp
         # lp_criterion = nn.MSELoss() # approxNDCGLoss
-        lp_criterion = LambdaLoss()
+        # lp_criterion = LambdaLoss()
         
         
         classifier_lpm = LossPredictionMod(hyper_params)
@@ -753,8 +863,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                 max_iter=300,
                 random_state=42
             )
-            # try with and without standard scaler? Works better
-            # try with dimensionality reduction? Works better
+            # Standard scaler and dim reduction improve results
             from sklearn.decomposition import PCA
             pca = PCA(n_components=4)
             scaler = StandardScaler()
@@ -766,6 +875,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
             # add the pca locations of the points as a column
             # df2['pca'] = pd.Series(principalComponents.tolist())
             # exit()
+        # TODO fix the distance 
         elif lpm_selection == "distance":
             from sklearn.decomposition import PCA
             pca = PCA(n_components=4)
@@ -780,7 +890,7 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
 
         set_random_seed(seednr)
 
-
+        lpm_error_list = []
         # how many epochs need to happen
         hyper_params.classifier_epoch = 1
         for epoch in range(hyper_params.classifier_epoch):
@@ -847,20 +957,32 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         except:
                             print("WEIRD ERROR")
                         optimizer2.zero_grad()
-                        optimizer3.zero_grad()
+                        # optimizer3.zero_grad()
 
                     # predict best items to select in the pool
                     classifier.eval()
                     # get the model output of the xpools (no training)
-                    _, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device),y_mappingpool.to(device))
+                    yhat_test, kd_mid_test, trans_mid_test, ss_mid_test = classifier(xpool.to(device),y_mappingpool.to(device))
                     kd_mid_test, trans_mid_test, ss_mid_test = kd_mid_test.detach(), trans_mid_test.detach(), ss_mid_test.detach()
                     predicted_loss_test = classifier_lpm(kd_mid_test, trans_mid_test, ss_mid_test)
                     # # print(f"Test loss size: {test_loss.shape[0]}, with mean of {test_loss.mean()}")
                     # true_ranking = np.asarray(yhat_test.unsqueeze(1).cpu().detach().numpy())
                     predicted_losses_array =  np.asarray(predicted_loss_test.cpu().detach().numpy())
                     
-                    lpm_predictions = predicted_losses_array
-                    lpm_real_values = 
+                    # xpool to actual loss calculation
+                    loss_xpool = criterion(yhat_test, ypool.to(device))
+                    optimizer.zero_grad()
+                    optimizer2.zero_grad()
+
+                    # calculate the RMSE between the actual and predicted pool loss
+                    loss_xpool = loss_xpool.cpu().detach().numpy()
+                    # resize only to remove the 1 of the last dimension, if not it is less acurate
+
+                    predicted_losses_array.resize(loss_xpool.shape[0],)
+                    lpm_error = rmse(predicted_losses_array,loss_xpool)
+                    # print(type(lpm_error))
+                    lpm_error_list.append(lpm_error)
+                    # exit()
                     # def calc_distances(p0, points):
                     #     return ((p0 - points)**2).sum(axis=1)
                     # # Next, here is a way to implement your algorithm using more numpy functions:
@@ -881,9 +1003,13 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                         # get the top 10 highest loss indices, 10 is here batch_size
                         top_10_loss_indices = np.argpartition(predicted_losses_array,-batch_size, axis=0)[-batch_size:]
                         # these are in a list of a list so unpack it
-                        chosen_indices = [i[0] for i in top_10_loss_indices]
+                        # print(top_10_loss_indices[:10])
+                        # print(top_10_loss_indices.shape)
+                        # chosen_indices = [i for i in top_10_loss_indices]
+                        chosen_indices = top_10_loss_indices
                     elif lpm_selection == "kmeans":
                         
+
                         # make a dataframe with two columns, the losses and cluster number of the items in the pool and sort them
                         # the index number is kept so we have the index of the highest loss items in the top
                         # df1, df2 = pd.DataFrame(predicted_losses_array, columns = ['losses']), pd.DataFrame(kmeans.labels_, columns = ['cluster'])
@@ -955,15 +1081,18 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
                     else:
                         print("no lpm selection measure given")
                         pass
+
                 # original thing
                 elif altype == "lpm_rankwise":
+                    print("optimzier 3 not implemented right yet")
+                    exit()
                     # Loss learning module
 
                     # train the loss prediction module with the seed
                     if epoch <= 1:
                         optimizer.zero_grad()
                         optimizer2.zero_grad()
-                        optimizer3.zero_grad()
+                        # optimizer3.zero_grad()
                         # try:
                         # Makes predictions detach old loss function (only update over loss prediction module)
                         
@@ -976,10 +1105,10 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
 
                         # Computes gradients and updates model
                         loss3.backward()
-                        optimizer3.step()
+                        # optimizer3.step()
                         # except:
                         #     print("WEIRD ERROR")
-                        optimizer3.zero_grad()
+                        # optimizer3.zero_grad()
 
                     # predict best items to select in the pool
                     classifier.eval()
@@ -1043,12 +1172,17 @@ def AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping
         # plt.plot(x_axis, AUC_micro, label=f'AUC_micro_{i}',color= f'#{colours[e][2]}')
         # plt.plot(x_axis, AUC_macro, label=f'AUC_macro_{i}',color= f'#{colours[e][3]}')
 
+    # if you want to plot RMSE
+    # x_axis = [i for i in range(len(lpm_error_list))]
+    # plt.plot(x_axis,lpm_error_list)
+    # plt.ylabel('RMSE', fontsize=16)
 
     plt.xlabel('Instances', fontsize=18)
     plt.ylabel('Values', fontsize=16)
 
     # from scipy.stats import linregress
-    plt.title("Active learning with DSLL")
+    # plt.title("Active learning with DSLL")
+    plt.title("RMSE lpm to real loss")
     plt.legend(bbox_to_anchor=(1,1), loc="upper left")
     plt.show()
     # exit()

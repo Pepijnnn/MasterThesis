@@ -5,6 +5,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
 import torch
 from train import   train_KD, train_DSLL_model, train_new, train_S_label_mapping, AL_train_DSLL_model
+from othml import train_BR_CC
 from helpers import predict, print_predict, LayerActivations
 from params_setting import get_params
 from load_data import load_dataset
@@ -29,7 +30,7 @@ class CustomDataset(Dataset):
         return len(self.x)
 
 # class CustomActiveLearningDataset(Dataset):
-def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, y_tensor, seeds = 10):
+def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, old_y_tensor, y_tensor, seeds = 10):
     # randomly select the seeds
     all_indices = np.arange(0, len(x_tensor))
     random_seed_list = np.random.randint(0, len(x_tensor), seeds)
@@ -41,19 +42,24 @@ def CustomActiveLearningDataset(x_tensor,y_mapping_tensor, y_tensor, seeds = 10)
     xseed = x_tensor[random_seed_list]
     y_mappingseed = y_mapping_tensor[random_seed_list]
     yseed = y_tensor[random_seed_list]
+    oldyseed = old_y_tensor[random_seed_list]
 
     # remove the seeds from the pool
     xpool = x_tensor
     y_mappingpool = y_mapping_tensor
     ypool = y_tensor
+    oldypool = old_y_tensor
 
     # pool contains all x_tensor except for the ones in the seed
     xpool = xpool[difference]
     y_mappingpool = y_mappingpool[difference]
     ypool = ypool[difference]
+    oldypool = oldypool[difference]
+
+    # train_test_split(xpool, ypool)
 
     # return seeds and pool
-    return (xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool)
+    return (xseed, y_mappingseed, yseed, xpool, y_mappingpool, ypool, oldyseed, oldypool)
 
 
 if __name__ == '__main__':
@@ -192,6 +198,7 @@ if __name__ == '__main__':
             mapping_model = torch.load(
                 f'models/{i+1}mapping-pep-{split}-upd')
         else:
+            # y is half predicted and half original
             mapping_model = train_S_label_mapping(hyper_params, 0.5 * train_Y + 0.5 * soft_train_Y, train_Y_new) # soft_test_Y
             # torch.save(mapping_model, f'models/{i+1}mapping-pep-{split}-upd')  
         mapping_train_Y_new = predict(mapping_model, 0.1 * soft_train_Y + 0.9 * train_Y)
@@ -201,11 +208,13 @@ if __name__ == '__main__':
         # Senior Student
         mapping_train_Y_new_tensor = torch.from_numpy(mapping_train_Y_new).float()
         train_Y_new_tensor = torch.from_numpy(train_Y_new).float()
+        train_Y_old_tensor = torch.from_numpy(train_Y).float()
+
         # if we use active leanring we cant use a loader so the whole data needs to be loaded in memory!!!!
         # possible fix is to use random set each time in loader which changes
         if use_al == True:
             batch_size = 10
-            seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor, batch_size)
+            seed_pool = CustomActiveLearningDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_old_tensor,train_Y_new_tensor, batch_size)
         else:
             train_data_DSLL = CustomDataset(train_X_tensor, mapping_train_Y_new_tensor, train_Y_new_tensor)
         
@@ -221,6 +230,10 @@ if __name__ == '__main__':
 
             # if true then go into the AL mode
             if use_al == True:
+                
+                # train_BR_CC(train_X, train_Y, train_Y_rest, test_X, test_Y, test_Y_rest, seed_pool, seednr)
+                # CC_dataset = (train_X, train_Y, train_Y_rest, test_X, test_Y, test_Y_rest)
+                # exit()
                 AL_train_DSLL_model(hyper_params, featureKD_model, train_X, train_Y, mapping_train_Y_new, train_Y_new, test_X,
                                 mapping_test_Y_new, test_Y_new, seed_pool, use_al, seednr)
             else:    
