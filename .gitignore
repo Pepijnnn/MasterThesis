@@ -132,3 +132,5 @@ DSLL/datasets/wiki10_test.txt
 DSLL/datasets/wiki10_train.txt
 DSLL/datasets/wiki10_Xf.txt
 DSLL/datasets/wiki10_Y.txt
+DSLL/datasets/nus_train.zip
+DSLL/datasets/nus_test.zip
